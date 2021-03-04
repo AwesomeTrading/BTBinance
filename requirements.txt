@@ -1,0 +1,5 @@
+backtrader
+ccxt
+numpy
+python-binance
+unicorn-binance-websocket-api
