@@ -12,8 +12,9 @@ def main():
         options={'defaultType': 'future'},
     ),
                          sandbox=True)
-    store.subscribe_account()
-    store._t_loop_stream()
+    # store.subscribe_account()
+    # store.subscribe_bars(['btcusdt'], '5m')
+    # store._t_loop_stream()
 
 
 if __name__ == '__main__':

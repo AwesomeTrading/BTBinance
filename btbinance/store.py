@@ -5,12 +5,15 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import time
+import logging
 import threading
 
 import backtrader as bt
 from backtrader.utils.py3 import queue
 from ccxtbt import CCXTStore
 from unicorn_binance_websocket_api.unicorn_binance_websocket_api_manager import BinanceWebSocketApiManager
+
+logger = logging.getLogger('BTBinanceStore')
 
 
 class BinanceStore(CCXTStore):
@@ -72,7 +75,7 @@ class BinanceStore(CCXTStore):
         print(exchange)
         self.ws = BinanceWebSocketApiManager(exchange=exchange)
 
-        # self._loop_stream()
+        self._loop_stream()
 
     def from_interval(self, interval):
         timeframe = self._INTERVALS_REVERSED.get(interval)
@@ -89,9 +92,10 @@ class BinanceStore(CCXTStore):
 
     # subscribe
     # account
-    def subscribe_account(self):
+    def subscribe_account(self, **kwargs):
         return self.subscribe(['arr'], ['!userData'],
-                              ['ACCOUNT_UPDATE', 'ORDER_TRADE_UPDATE'])
+                              ['ACCOUNT_UPDATE', 'ORDER_TRADE_UPDATE'],
+                              **kwargs)
 
     # https://binance-docs.github.io/apidocs/futures/en/#event-order-update
     def _parse_account(self, e):
@@ -101,12 +105,15 @@ class BinanceStore(CCXTStore):
 
         balances = []
         for b in a['B']:
-            balances.append(
-                dict(
+            if b['a'] == self.currency:
+                balance = dict(
                     asset=b['a'],
                     wallet=b['wb'],  # Wallet Balance
-                    cross=b['cw'],  #Cross Wallet Balance
-                ))
+                    cross=b['cw'],  # Cross Wallet Balance
+                )
+                balances.append(balance)
+                self._cash = balance['wallet']
+                self._value = balance['cross']
 
         positions = []
         for p in a['P']:
@@ -182,10 +189,19 @@ class BinanceStore(CCXTStore):
             ))
 
     # bar
-    def subscribe_bars(self, interval, markets):
+    def subscribe_bars(self, markets, interval, reuse=True, **kwargs):
+        markets = [m.replace('/', '') for m in markets]
         channel = f"kline_{interval}"
-        listeners = self._bar_listeners(interval, markets)
-        return self.subscribe([channel], markets, listeners)
+        if reuse:
+            listeners = ["kline"]
+        else:
+            listeners = self._bar_listeners(markets, interval)
+
+        return self.subscribe([channel],
+                              markets,
+                              listeners,
+                              reuse=reuse,
+                              **kwargs)
 
     def _bar_listeners(self, markets, interval):
         channels = []
@@ -220,17 +236,20 @@ class BinanceStore(CCXTStore):
                 trades=b["n"],  # Number of trades
                 closed=b["x"],  # Is this kline closed?
                 quote_volume=b["q"],  # Quote asset volume
-                base_volume=b["V"],  # Taker buy base asset volume
-                quote_volume=b["Q"],  # Taker buy quote asset volume
+                taker_base_volume=b["V"],  # Taker buy base asset volume
+                taker_quote_volume=b["Q"],  # Taker buy quote asset volume
                 ignore=b["B"],  # Ignore
             ))
-        event['listener'] = self._bar_listener(event['symbol'],
-                                               event['bar']['interval'])
+        event['listeners'] = [
+            "kline",
+            self._bar_listener(event['symbol'], event['bar']['interval'])
+        ]
         return event
 
     # ticker
-    def subscribe_tickers(self, markets):
-        return self.subscribe('ticker', markets, ['24hrTicker'])
+    def subscribe_tickers(self, markets, **kwargs):
+        markets = [m.replace('/', '') for m in markets]
+        return self.subscribe('ticker', markets, ['24hrTicker'], **kwargs)
 
     def _parse_ticker(self, e):
         if e['e'] != '24hrTicker':
@@ -257,8 +276,10 @@ class BinanceStore(CCXTStore):
         )
 
     # mini ticker
-    def subscribe_minitickers(self, markets):
-        return self.subscribe('miniTicker', markets, ['24hrMiniTicker'])
+    def subscribe_minitickers(self, markets, **kwargs):
+        markets = [m.replace('/', '') for m in markets]
+        return self.subscribe('miniTicker', markets, ['24hrMiniTicker'],
+                              **kwargs)
 
     def _parse_miniticker(self, e):
         if e['e'] != '24hrMiniTicker':
@@ -276,14 +297,24 @@ class BinanceStore(CCXTStore):
         )
 
     # subscribe
-    def subscribe(self, channels, markets, events, q=None, **kwargs):
-        if q is None:
+    def subscribe(self,
+                  channels,
+                  markets,
+                  events,
+                  q=None,
+                  reuse=False,
+                  **kwargs):
+        reused = False
+        if reuse and events[0] in self.subscribers:
+            q = self.subscribers[events[0]]
+            reused = True
+        elif q is None:
             q = queue.Queue()
 
         sid = self.ws.create_stream(channels,
                                     markets,
-                                    stream_label="raw_data",
-                                    output="raw_data",
+                                    stream_label="dict",
+                                    output="dict",
                                     api_key=self.exchange.apiKey,
                                     api_secret=self.exchange.secret,
                                     **kwargs)
@@ -294,10 +325,11 @@ class BinanceStore(CCXTStore):
         }
         self.streams[sid] = subscriber
 
-        for e in events:
-            if e not in self.subscribers:
-                self.subscribers[e] = []
-            self.subscribers[e].append(subscriber)
+        if not reused:
+            for e in events:
+                if e not in self.subscribers:
+                    self.subscribers[e] = []
+                self.subscribers[e].append(subscriber)
         return q
 
     def unsubscribe(self, *args, **kwargs):
@@ -322,20 +354,34 @@ class BinanceStore(CCXTStore):
                 continue
             if buffer is not None:
                 try:
-                    name = buffer['e']
+                    if 'data' in buffer:
+                        buffer = buffer['data']
+
+                    if 'e' in buffer:
+                        name = buffer['e']
+                    else:
+                        raise RuntimeError(
+                            f"buffer format is invalid: {buffer}")
+
                     if name not in self.parsers:
-                        print(f"event parser not found: {buffer}")
+                        logger.info("event parser not found: %s", buffer)
                         continue
 
                     event = self.parsers[name](buffer)
-                    listener = name if 'listener' not in event else event[
-                        'listener']
-                    if listener not in self.subscribers:
-                        print(f"event subscriber not found: {buffer}")
-                        continue
 
-                    for subscriber in self.subscribers[listener]:
-                        subscriber['q'].push(event)
+                    if 'listeners' in event:
+                        listeners = event['listeners']
+                    else:
+                        listeners = [name]
+
+                    for listener in listeners:
+                        if listener not in self.subscribers:
+                            logger.info("event subscriber not found: %s",
+                                        buffer)
+                            continue
+
+                        for subscriber in self.subscribers[listener]:
+                            subscriber['q'].put(event)
                 except Exception as e:
                     print(f"raw data: {buffer}")
                     print(f"exception: {e}")
