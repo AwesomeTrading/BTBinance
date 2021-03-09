@@ -1,60 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8; py-indent-offset:4 -*-
-###############################################################################
-#
-# Copyright (C) 2017 Ed Bartosh <bartosh@gmail.com>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-###############################################################################
+
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import time
 import threading
-from datetime import datetime
-from functools import wraps
 
 import backtrader as bt
-from backtrader.metabase import MetaParams
-from backtrader.utils.py3 import queue, with_metaclass
+from backtrader.utils.py3 import queue
+from ccxtbt import CCXTStore
 from unicorn_binance_websocket_api.unicorn_binance_websocket_api_manager import BinanceWebSocketApiManager
 
 
-class MetaSingleton(MetaParams):
-    '''Metaclass to make a metaclassed class a singleton'''
-    def __init__(cls, name, bases, dct):
-        super(MetaSingleton, cls).__init__(name, bases, dct)
-        cls._singleton = None
-
-    def __call__(cls, *args, **kwargs):
-        if cls._singleton is None:
-            cls._singleton = (super(MetaSingleton,
-                                    cls).__call__(*args, **kwargs))
-
-        return cls._singleton
-
-
-class BinanceStore(with_metaclass(MetaSingleton, object)):
-    '''API provider for Binance feed and broker classes.
-
-    Added a new get_wallet_balance method. This will allow manual checking of the balance.
-        The method will allow setting parameters. Useful for getting margin balances
-
-    Added new private_end_point method to allow using any private non-unified end point
-
-    '''
+class BinanceStore(CCXTStore):
+    '''API provider for Binance feed and broker classes.'''
 
     # Supported granularities
     _INTERVALS = {
@@ -82,28 +42,35 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
     }
     _INTERVALS_REVERSED = {v: k for k, v in _INTERVALS.items()}
 
-    BrokerCls = None  # broker class will auto register
-    DataCls = None  # data class will auto register
+    def __init__(self, currency='USDT', sandbox=False, retries=10, **kwargs):
+        super().__init__(exchange='binance',
+                         currency=currency,
+                         sandbox=sandbox,
+                         retries=retries,
+                         **kwargs)
 
-    @classmethod
-    def getdata(cls, *args, **kwargs):
-        '''Returns ``DataCls`` with args, kwargs'''
-        return cls.DataCls(*args, **kwargs)
+        self.streams = {}
+        self.subscribers = {}
+        self.parsers = {
+            'ACCOUNT_UPDATE': self._parse_account,
+            'ORDER_TRADE_UPDATE': self._parse_order,
+            'kline': self._parse_bar,
+            '24hrTicker': self._parse_ticker,
+            '24hrMiniTicker': self._parse_miniticker,
+        }
 
-    @classmethod
-    def getbroker(cls, *args, **kwargs):
-        '''Returns broker with *args, **kwargs from registered ``BrokerCls``'''
-        return cls.BrokerCls(*args, **kwargs)
+        # binance websocket init
+        exchange = 'binance.com'
+        type = self.exchange.options['defaultType']
+        if type == 'margin':
+            exchange = f"{exchange}-margin"
+        elif type == 'future':
+            exchange = f"{exchange}-futures"
 
-    def __init__(self, config, sandbox=False):
         if sandbox:
-            exchange = "binance.com-futures-testnet"
-        else:
-            exchange = "binance.com-futures"
-        self.exchange = BinanceWebSocketApiManager(exchange=exchange)
-        self.stream_id = self.subscribe(["arr"], ["!userData"],
-                                        api_key=config['api_key'],
-                                        api_secret=config['api_secret'])
+            exchange = f"{exchange}-testnet"
+        print(exchange)
+        self.ws = BinanceWebSocketApiManager(exchange=exchange)
 
         # self._loop_stream()
 
@@ -120,12 +87,225 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
                 f"Interval for {timeframe, compression} is not support")
         return interval
 
-    def subscribe(self, *args, **kwargs):
-        return self.exchange.create_stream(*args,
-                                           **kwargs,
-                                           stream_label="raw_data",
-                                           output="raw_data")
+    # subscribe
+    # account
+    def subscribe_account(self):
+        return self.subscribe(['arr'], ['!userData'],
+                              ['ACCOUNT_UPDATE', 'ORDER_TRADE_UPDATE'])
 
+    # https://binance-docs.github.io/apidocs/futures/en/#event-order-update
+    def _parse_account(self, e):
+        if e['e'] != 'ACCOUNT_UPDATE':
+            raise RuntimeError(f"event {e} is not ACCOUNT_UPDATE")
+        a = e['a']
+
+        balances = []
+        for b in a['B']:
+            balances.append(
+                dict(
+                    asset=b['a'],
+                    wallet=b['wb'],  # Wallet Balance
+                    cross=b['cw'],  #Cross Wallet Balance
+                ))
+
+        positions = []
+        for p in a['P']:
+            positions.append(
+                dict(
+                    symbol=p["s"],  # Symbol
+                    amount=p["pa"],  # Position Amount
+                    price=p["ep"],  # Entry Price
+                    accum=p["cr"],  # (Pre-fee) Accumulated Realized
+                    pnl=["up"],  # Unrealized PnL
+                    margin_type=p["mt"],  # Margin Type
+                    isolated=p["iw"],  # Isolated Wallet (if isolated position)
+                    side=p["ps"],  # Position Side
+                ))
+
+        return dict(
+            event=e['e'],
+            event_time=e['E'],
+            transaction_time=e['T'],
+            account=dict(
+                reason=a['m'],  # Event reason type
+                balances=balances,
+                positions=positions,
+            ))
+
+    def _parse_order(self, e):
+        if e['e'] != 'ORDER_TRADE_UPDATE':
+            raise RuntimeError(f"event {e} is not ORDER_TRADE_UPDATE")
+        o = e['o']
+        return dict(
+            event=e['e'],
+            event_time=e['E'],
+            transaction_time=e['T'],
+            order=dict(
+                symbol=o['s'],  # Symbol
+                client_id=o["c"],  # Client Order Id
+                # special client order id:
+                # starts with "autoclose-": liquidation order
+                # "adl_autoclose": ADL auto close order
+                side=o["S"],  # Side
+                type=o["o"],  # Order Type
+                force="f",  # Time in Force
+                quantity=o["q"],  # Original Quantity
+                price=o["p"],  # Original Price
+                avg_price=o["ap"],  # Average Price
+                stop_price=
+                o["sp"],  # Stop Price. Please ignore with TRAILING_STOP_MARKET order
+                exec_type=e["x"],  # Execution Type
+                status=o["X"],  # Order Status
+                id=o["i"],  # Order Id
+                last_qty=o["l"],  # Order Last Filled Quantity
+                accum_qty=o["z"],  # Order Filled Accumulated Quantity
+                last_price=o["L"],  # Last Filled Price
+                comm_asset=o[
+                    "N"],  # Commission Asset, will not push if no commission
+                comm=o["n"],  # Commission, will not push if no commission
+                time=o["T"],  # Order Trade Time
+                tradeid=o["t"],  # Trade Id
+                bid=o["b"],  # Bids Notional
+                ask=o["a"],  # Ask Notional
+                maker=o["m"],  # Is this trade the maker side?
+                reduce_only=o["R"],  # Is this reduce only
+                work_type=o["wt"],  # Stop Price Working Type
+                origin_type=o["ot"],  # Original Order Type
+                position_side=o["ps"],  # Position Side
+                close_all=o[
+                    "cp"],  # If Close-All, pushed with conditional order
+                active_price=
+                o["AP"],  # Activation Price, only puhed with TRAILING_STOP_MARKET order
+                call_rate=
+                o["cr"],  # Callback Rate, only puhed with TRAILING_STOP_MARKET order
+                profit=o["rp"],  # Realized Profit of the trade
+            ))
+
+    # bar
+    def subscribe_bars(self, timeframe, compression, markets):
+        interval = self.to_interval(timeframe, compression)
+        channel = f"kline_{interval}"
+        listeners = self._bar_listeners(interval, markets)
+        return self.subscribe([channel], markets, listeners)
+
+    def _bar_listeners(self, markets, interval):
+        channels = []
+        for m in markets:
+            channels.append(self._bar_listener(m, interval))
+        return channels
+
+    def _bar_listener(self, market, interval):
+        return f"kline_{market}_{interval}"
+
+    def _parse_bar(self, e):
+        if e['e'] != 'kline':
+            raise RuntimeError(f"event {e} is not kline")
+        b = e['k']
+
+        event = dict(
+            event=e['e'],
+            event_time=e['E'],
+            symbol=e['s'],
+            bar=dict(
+                start=b["t"],  # Kline start time
+                end=b["T"],  # Kline close time
+                symbol=b["s"],  # Symbol
+                interval=b["i"],  # Interval
+                first_tradeid=b["f"],  # First trade ID
+                last_tradeid=b["L"],  # Last trade ID
+                open=b["o"],  # Open price
+                close=b["c"],  # Close price
+                high=b["h"],  # High price
+                low=b["l"],  # Low price
+                volume=b["v"],  # Base asset volume
+                trades=b["n"],  # Number of trades
+                closed=b["x"],  # Is this kline closed?
+                quote_volume=b["q"],  # Quote asset volume
+                base_volume=b["V"],  # Taker buy base asset volume
+                quote_volume=b["Q"],  # Taker buy quote asset volume
+                ignore=b["B"],  # Ignore
+            ))
+        event['listener'] = self._bar_listener(event['symbol'],
+                                               event['bar']['interval'])
+        return event
+
+    # ticker
+    def subscribe_tickers(self, markets):
+        return self.subscribe('ticker', markets, ['24hrTicker'])
+
+    def _parse_ticker(self, e):
+        if e['e'] != '24hrTicker':
+            raise RuntimeError(f"event {e} is not 24hrTicker")
+        return dict(
+            event=e['e'],
+            event_time=e['E'],
+            symbol=e["s"],  # Symbol
+            change=e["p"],  # Price change
+            change_percent=e["P"],  # Price change percent
+            avg_price=e["w"],  # Weighted average price
+            last=e["c"],  # Last price
+            quantity=e["Q"],  # Last quantity
+            open=e["o"],  # Open price
+            high=e["h"],  # High price
+            low=e["l"],  # Low price
+            volume=e["v"],  # Total traded base asset volume
+            quote_volume=e["q"],  # Total traded quote asset volume
+            open_time=e["O"],  # Statistics open time
+            close_time=e["C"],  # Statistics close time
+            first_tradeid=e["F"],  # First trade ID
+            last_tradeid=e["L"],  # Last trade Id
+            trades=e["n"],  # Total number of trades
+        )
+
+    # mini ticker
+    def subscribe_minitickers(self, markets):
+        return self.subscribe('miniTicker', markets, ['24hrMiniTicker'])
+
+    def _parse_miniticker(self, e):
+        if e['e'] != '24hrMiniTicker':
+            raise RuntimeError(f"event {e} is not 24hrMiniTicker")
+        return dict(
+            event=e['e'],
+            event_time=e['E'],
+            symbol=e["s"],  # Symbol
+            close=e["c"],  # Close price
+            open=e["o"],  # Open price
+            high=e["h"],  # High price
+            low=e["l"],  # Low price
+            volume=e["v"],  # Total traded base asset volume
+            quote_volume=e["q"],  # Total traded quote asset volume
+        )
+
+    # subscribe
+    def subscribe(self, channels, markets, events, q=None, **kwargs):
+        if q is None:
+            q = queue.Queue()
+
+        sid = self.ws.create_stream(channels,
+                                    markets,
+                                    stream_label="raw_data",
+                                    output="raw_data",
+                                    api_key=self.exchange.apiKey,
+                                    api_secret=self.exchange.secret,
+                                    **kwargs)
+        subscriber = {
+            'q': q,
+            'id': sid,
+            'events': events,
+        }
+        self.streams[sid] = subscriber
+
+        for e in events:
+            if e not in self.subscribers:
+                self.subscribers[e] = []
+            self.subscribers[e].append(subscriber)
+        return q
+
+    def unsubscribe(self, *args, **kwargs):
+        '''Return stream bool'''
+        return self.ws.unsubscribe_from_stream(*args, **kwargs)
+
+    # stream data loop
     def _loop_stream(self):
         t = threading.Thread(target=self._t_loop_stream)
         t.daemon = True
@@ -133,24 +313,33 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
 
     def _t_loop_stream(self):
         while True:
-            if self.exchange.is_manager_stopping():
+            if self.ws.is_manager_stopping():
                 self.stop()
                 return
 
-            buffer = self.exchange.pop_stream_data_from_stream_buffer()
+            buffer = self.ws.pop_stream_data_from_stream_buffer()
             if buffer is False:
                 time.sleep(0.01)
                 continue
             if buffer is not None:
                 try:
-                    if buffer['event_time'] >= \
-                            buffer['kline']['kline_close_time']:
-                        # print only the last kline
-                        print(f"UnicornFy: {buffer}")
-                except KeyError:
-                    print(f"dict: {buffer}")
-                except TypeError:
-                    print(f"raw_data: {buffer}")
+                    name = buffer['e']
+                    if name not in self.parsers:
+                        print(f"event parser not found: {buffer}")
+                        continue
+
+                    event = self.parsers[name](buffer)
+                    listener = name if 'listener' not in event else event[
+                        'listener']
+                    if listener not in self.subscribers:
+                        print(f"event subscriber not found: {buffer}")
+                        continue
+
+                    for subscriber in self.subscribers[listener]:
+                        subscriber['q'].push(event)
+                except Exception as e:
+                    print(f"raw data: {buffer}")
+                    print(f"exception: {e}")
 
     def stop(self):
-        pass
+        self.ws.stop_manager_with_all_streams()

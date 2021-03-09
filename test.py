@@ -6,8 +6,13 @@ api_secret = "9da25f276b0bfc1d35720ec047cbbafc1f979426888790d1b930db094d42c4d8"
 
 
 def main():
-    store = BinanceStore(dict(api_key=api_key, api_secret=api_secret),
+    store = BinanceStore(config=dict(
+        apiKey=api_key,
+        secret=api_secret,
+        options={'defaultType': 'future'},
+    ),
                          sandbox=True)
+    store.subscribe_account()
     store._t_loop_stream()
 
 
