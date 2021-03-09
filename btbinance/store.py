@@ -182,8 +182,7 @@ class BinanceStore(CCXTStore):
             ))
 
     # bar
-    def subscribe_bars(self, timeframe, compression, markets):
-        interval = self.to_interval(timeframe, compression)
+    def subscribe_bars(self, interval, markets):
         channel = f"kline_{interval}"
         listeners = self._bar_listeners(interval, markets)
         return self.subscribe([channel], markets, listeners)
