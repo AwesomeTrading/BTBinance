@@ -122,7 +122,7 @@ class BinanceStore(CCXTStore):
                     amount=p["pa"],  # Position Amount
                     price=p["ep"],  # Entry Price
                     accum=p["cr"],  # (Pre-fee) Accumulated Realized
-                    pnl=["up"],  # Unrealized PnL
+                    pnl=p["up"],  # Unrealized PnL
                     margin_type=p["mt"],  # Margin Type
                     isolated=p["iw"],  # Isolated Wallet (if isolated position)
                     side=p["ps"],  # Position Side
