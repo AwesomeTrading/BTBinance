@@ -52,7 +52,6 @@ class BinanceStore(CCXTStore):
                          retries=retries,
                          **kwargs)
 
-        self.streams = {}
         self.subscribers = {}
         self.parsers = {
             'ACCOUNT_UPDATE': self._parse_account,
@@ -189,19 +188,15 @@ class BinanceStore(CCXTStore):
             ))
 
     # bar
-    def subscribe_bars(self, markets, interval, reuse=True, **kwargs):
+    def subscribe_bars(self, markets, interval, q=None, **kwargs):
         markets = [m.replace('/', '') for m in markets]
         channel = f"kline_{interval}"
-        if reuse:
+        if q is not None:
             listeners = ["kline"]
         else:
             listeners = self._bar_listeners(markets, interval)
 
-        return self.subscribe([channel],
-                              markets,
-                              listeners,
-                              reuse=reuse,
-                              **kwargs)
+        return self.subscribe(channel, markets, listeners, q=q, **kwargs)
 
     def _bar_listeners(self, markets, interval):
         channels = []
@@ -297,16 +292,9 @@ class BinanceStore(CCXTStore):
         )
 
     # subscribe
-    def subscribe(self,
-                  channels,
-                  markets,
-                  events,
-                  q=None,
-                  reuse=False,
-                  **kwargs):
+    def subscribe(self, channels, markets, events, q=None, **kwargs):
         reused = False
-        if reuse and events[0] in self.subscribers:
-            q = self.subscribers[events[0]]
+        if q is not None:
             reused = True
         elif q is None:
             q = queue.Queue()
@@ -319,22 +307,38 @@ class BinanceStore(CCXTStore):
                                     api_secret=self.exchange.secret,
                                     **kwargs)
         subscriber = {
-            'q': q,
             'id': sid,
+            'q': q,
+            'channels': channels,
+            'markets': markets,
+            'reused': reused,
             'events': events,
         }
-        self.streams[sid] = subscriber
 
-        if not reused:
-            for e in events:
-                if e not in self.subscribers:
-                    self.subscribers[e] = []
+        # set event listener
+        for e in events:
+            if e not in self.subscribers:
+                self.subscribers[e] = []
+
+            existed = False
+            if reused:
+                for sub in self.subscribers[e]:
+                    if sub['channels'] == channels and sub[
+                            'markets'] == markets:
+                        existed = True
+                        break
+                    if sub['q'] == q:
+                        existed = True
+                        break
+
+            if not existed:
                 self.subscribers[e].append(subscriber)
-        return q
+        return q, sid
 
-    def unsubscribe(self, *args, **kwargs):
+    def unsubscribe(self, stream_id, channels=[], markets=[], **kwargs):
         '''Return stream bool'''
-        return self.ws.unsubscribe_from_stream(*args, **kwargs)
+        return self.ws.unsubscribe_from_stream(stream_id, channels, markets,
+                                               **kwargs)
 
     # stream data loop
     def _loop_stream(self):
@@ -376,8 +380,6 @@ class BinanceStore(CCXTStore):
 
                     for listener in listeners:
                         if listener not in self.subscribers:
-                            logger.info("event subscriber not found: %s",
-                                        buffer)
                             continue
 
                         for subscriber in self.subscribers[listener]:
