@@ -282,6 +282,26 @@ class BinanceStore(CCXTStore):
             quote_volume=e["q"],  # Total traded quote asset volume
         )
 
+    # book ticker
+    def subscribe_bookticker(self, markets, **kwargs):
+        markets = [m.replace('/', '') for m in markets]
+        return self.subscribe('bookTicker', markets, ['bookTicker'], **kwargs)
+
+    def _parse_bookticker(self, e):
+        if e['e'] != 'bookTicker':
+            raise RuntimeError(f"event {e} is not bookTicker")
+        return dict(
+            event=e['e'],
+            event_time=e['E'],
+            transaction_time=e['T'],
+            update_id=e["u"],
+            symbol=e["s"],
+            bid=float(e["b"]),
+            bid_qty=float(e["B"]),
+            ask=float(e["a"]),
+            ask_qty=float(e["A"]),
+        )
+
     # subscribe
     def subscribe(self, channels, markets, events, q=None, **kwargs):
         reused = False
@@ -297,15 +317,6 @@ class BinanceStore(CCXTStore):
                                     api_key=self.exchange.apiKey,
                                     api_secret=self.exchange.secret,
                                     **kwargs)
-        subscriber = {
-            'id': sid,
-            'q': q,
-            'channels': channels,
-            'markets': markets,
-            'reused': reused,
-            'events': events,
-        }
-
         # set event listener
         for e in events:
             if e not in self.subscribers:
@@ -313,17 +324,13 @@ class BinanceStore(CCXTStore):
 
             existed = False
             if reused:
-                for sub in self.subscribers[e]:
-                    if sub['channels'] == channels and sub[
-                            'markets'] == markets:
-                        existed = True
-                        break
-                    if sub['q'] == q:
+                for sq in self.subscribers[e]:
+                    if sq == q:
                         existed = True
                         break
 
             if not existed:
-                self.subscribers[e].append(subscriber)
+                self.subscribers[e].append(q)
         return q, sid
 
     def unsubscribe(self, stream_id, channels=[], markets=[], **kwargs):
@@ -373,8 +380,8 @@ class BinanceStore(CCXTStore):
                         if listener not in self.subscribers:
                             continue
 
-                        for subscriber in self.subscribers[listener]:
-                            subscriber['q'].put(event)
+                        for q in self.subscribers[listener]:
+                            q.put(event)
                 except Exception as e:
                     print(f"raw data: {buffer}")
                     print(f"exception: {e}")
