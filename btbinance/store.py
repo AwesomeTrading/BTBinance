@@ -107,8 +107,8 @@ class BinanceStore(CCXTStore):
             if b['a'] == self.currency:
                 balance = dict(
                     asset=b['a'],
-                    wallet=b['wb'],  # Wallet Balance
-                    cross=b['cw'],  # Cross Wallet Balance
+                    wallet=float(b['wb']),  # Wallet Balance
+                    cross=float(b['cw']),  # Cross Wallet Balance
                 )
                 balances.append(balance)
                 self._cash = balance['wallet']
@@ -142,50 +142,41 @@ class BinanceStore(CCXTStore):
         if e['e'] != 'ORDER_TRADE_UPDATE':
             raise RuntimeError(f"event {e} is not ORDER_TRADE_UPDATE")
         o = e['o']
-        return dict(
-            event=e['e'],
-            event_time=e['E'],
-            transaction_time=e['T'],
-            order=dict(
-                symbol=o['s'],  # Symbol
-                client_id=o["c"],  # Client Order Id
-                # special client order id:
-                # starts with "autoclose-": liquidation order
-                # "adl_autoclose": ADL auto close order
-                side=o["S"],  # Side
-                type=o["o"],  # Order Type
-                force="f",  # Time in Force
-                quantity=o["q"],  # Original Quantity
-                price=o["p"],  # Original Price
-                avg_price=o["ap"],  # Average Price
-                stop_price=
-                o["sp"],  # Stop Price. Please ignore with TRAILING_STOP_MARKET order
-                exec_type=e["x"],  # Execution Type
-                status=o["X"],  # Order Status
-                id=o["i"],  # Order Id
-                last_qty=o["l"],  # Order Last Filled Quantity
-                accum_qty=o["z"],  # Order Filled Accumulated Quantity
-                last_price=o["L"],  # Last Filled Price
-                comm_asset=o[
-                    "N"],  # Commission Asset, will not push if no commission
-                comm=o["n"],  # Commission, will not push if no commission
-                time=o["T"],  # Order Trade Time
-                tradeid=o["t"],  # Trade Id
-                bid=o["b"],  # Bids Notional
-                ask=o["a"],  # Ask Notional
-                maker=o["m"],  # Is this trade the maker side?
-                reduce_only=o["R"],  # Is this reduce only
-                work_type=o["wt"],  # Stop Price Working Type
-                origin_type=o["ot"],  # Original Order Type
-                position_side=o["ps"],  # Position Side
-                close_all=o[
-                    "cp"],  # If Close-All, pushed with conditional order
-                active_price=
-                o["AP"],  # Activation Price, only puhed with TRAILING_STOP_MARKET order
-                call_rate=
-                o["cr"],  # Callback Rate, only puhed with TRAILING_STOP_MARKET order
-                profit=o["rp"],  # Realized Profit of the trade
-            ))
+        return dict(event=e['e'],
+                    event_time=e['E'],
+                    transaction_time=e['T'],
+                    order=dict(
+                        symbol=o['s'],
+                        client_id=o["c"],
+                        side=o["S"],
+                        type=o["o"],
+                        force="f",
+                        quantity=o["q"],
+                        price=float(o["p"]),
+                        avg_price=float(o["ap"]),
+                        stop_price=float(o["sp"]),
+                        exec_type=o["x"],
+                        status=o["X"],
+                        id=o["i"],
+                        last_qty=o["l"],
+                        accum_qty=o["z"],
+                        last_price=float(o["L"]),
+                        time=o["T"],
+                        tradeid=o["t"],
+                        bid=float(o["b"]),
+                        ask=float(o["a"]),
+                        maker=o["m"],
+                        reduce_only=o["R"],
+                        work_type=o["wt"],
+                        origin_type=o["ot"],
+                        position_side=o["ps"],
+                        close_position=o["cp"],
+                        profit=o["rp"],
+                        comm_asset=o.get("N", None),
+                        comm=o.get("n", None),
+                        active_price=float(o.get("AP", 0)),
+                        call_rate=o.get("cr", None),
+                    ))
 
     # bar
     def subscribe_bars(self, markets, interval, q=None, **kwargs):
