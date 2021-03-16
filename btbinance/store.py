@@ -71,7 +71,6 @@ class BinanceStore(CCXTStore):
 
         if sandbox:
             exchange = f"{exchange}-testnet"
-        print(exchange)
         self.ws = BinanceWebSocketApiManager(exchange=exchange)
 
         self._loop_stream()
