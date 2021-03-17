@@ -119,11 +119,12 @@ class BinanceStore(CCXTStore):
                 dict(
                     symbol=p["s"],  # Symbol
                     amount=p["pa"],  # Position Amount
-                    price=p["ep"],  # Entry Price
-                    accum=p["cr"],  # (Pre-fee) Accumulated Realized
-                    pnl=p["up"],  # Unrealized PnL
+                    price=float(p["ep"]),  # Entry Price
+                    accum=float(p["cr"]),  # (Pre-fee) Accumulated Realized
+                    pnl=float(p["up"]),  # Unrealized PnL
                     margin_type=p["mt"],  # Margin Type
-                    isolated=p["iw"],  # Isolated Wallet (if isolated position)
+                    isolated=float(
+                        p["iw"]),  # Isolated Wallet (if isolated position)
                     side=p["ps"],  # Position Side
                 ))
 
@@ -150,15 +151,15 @@ class BinanceStore(CCXTStore):
                         side=o["S"],
                         type=o["o"],
                         force="f",
-                        quantity=o["q"],
+                        quantity=float(o["q"]),
                         price=float(o["p"]),
                         avg_price=float(o["ap"]),
                         stop_price=float(o["sp"]),
                         exec_type=o["x"],
                         status=o["X"],
                         id=o["i"],
-                        last_qty=o["l"],
-                        accum_qty=o["z"],
+                        last_qty=float(o["l"]),
+                        accum_qty=float(o["z"]),
                         last_price=float(o["L"]),
                         time=o["T"],
                         tradeid=o["t"],
@@ -170,7 +171,7 @@ class BinanceStore(CCXTStore):
                         origin_type=o["ot"],
                         position_side=o["ps"],
                         close_position=o["cp"],
-                        profit=o["rp"],
+                        profit=float(o["rp"]),
                         comm_asset=o.get("N", None),
                         comm=o.get("n", None),
                         active_price=float(o.get("AP", 0)),
@@ -355,6 +356,11 @@ class BinanceStore(CCXTStore):
                 continue
             if buffer is not None:
                 try:
+                    # skip unwanted data
+                    if 'result' in buffer and buffer['result'] is None:
+                        continue
+
+                    # handle msg
                     if 'data' in buffer:
                         buffer = buffer['data']
 
