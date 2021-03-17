@@ -213,14 +213,14 @@ class BinanceStore(CCXTStore):
                 interval=b["i"],  # Interval
                 first_tradeid=b["f"],  # First trade ID
                 last_tradeid=b["L"],  # Last trade ID
-                open=b["o"],  # Open price
-                close=b["c"],  # Close price
-                high=b["h"],  # High price
-                low=b["l"],  # Low price
-                volume=b["v"],  # Base asset volume
+                open=float(b["o"]),  # Open price
+                close=float(b["c"]),  # Close price
+                high=float(b["h"]),  # High price
+                low=float(b["l"]),  # Low price
+                volume=float(b["v"]),  # Base asset volume
                 trades=b["n"],  # Number of trades
                 closed=b["x"],  # Is this kline closed?
-                quote_volume=b["q"],  # Quote asset volume
+                quote_volume=float(b["q"]),  # Quote asset volume
                 taker_base_volume=b["V"],  # Taker buy base asset volume
                 taker_quote_volume=b["Q"],  # Taker buy quote asset volume
                 ignore=b["B"],  # Ignore
@@ -243,16 +243,16 @@ class BinanceStore(CCXTStore):
             event=e['e'],
             event_time=e['E'],
             symbol=e["s"],  # Symbol
-            change=e["p"],  # Price change
-            change_percent=e["P"],  # Price change percent
-            avg_price=e["w"],  # Weighted average price
-            last=e["c"],  # Last price
-            quantity=e["Q"],  # Last quantity
-            open=e["o"],  # Open price
-            high=e["h"],  # High price
-            low=e["l"],  # Low price
-            volume=e["v"],  # Total traded base asset volume
-            quote_volume=e["q"],  # Total traded quote asset volume
+            change=float(e["p"]),  # Price change
+            change_percent=float(e["P"]),  # Price change percent
+            avg_price=float(e["w"]),  # Weighted average price
+            last=float(e["c"]),  # Last price
+            quantity=float(e["Q"]),  # Last quantity
+            open=float(e["o"]),  # Open price
+            high=float(e["h"]),  # High price
+            low=float(e["l"]),  # Low price
+            volume=float(e["v"]),  # Total traded base asset volume
+            quote_volume=float(e["q"]),  # Total traded quote asset volume
             open_time=e["O"],  # Statistics open time
             close_time=e["C"],  # Statistics close time
             first_tradeid=e["F"],  # First trade ID
@@ -273,12 +273,12 @@ class BinanceStore(CCXTStore):
             event=e['e'],
             event_time=e['E'],
             symbol=e["s"],  # Symbol
-            close=e["c"],  # Close price
-            open=e["o"],  # Open price
-            high=e["h"],  # High price
-            low=e["l"],  # Low price
-            volume=e["v"],  # Total traded base asset volume
-            quote_volume=e["q"],  # Total traded quote asset volume
+            close=float(e["c"]),  # Close price
+            open=float(e["o"]),  # Open price
+            high=float(e["h"]),  # High price
+            low=float(e["l"]),  # Low price
+            volume=float(e["v"]),  # Total traded base asset volume
+            quote_volume=float(e["q"]),  # Total traded quote asset volume
         )
 
     # book ticker
