@@ -263,7 +263,14 @@ class BinanceStore(CCXTStore):
         )
 
     # subscribe
+    def _rate_limit(self):
+        if self.exchange.enableRateLimit:
+            self.exchange.throttle()
+            self.exchange.lastRestRequestTimestamp = self.exchange.milliseconds()
+
     def subscribe(self, channels, markets, events, q=None, **kwargs):
+        self._rate_limit()
+
         reused = False
         if q is not None:
             reused = True
@@ -294,7 +301,7 @@ class BinanceStore(CCXTStore):
         return q, sid
 
     def unsubscribe(self, stream_id, channels=[], markets=[], **kwargs):
-        '''Return stream bool'''
+        self._rate_limit()
         return self.ws.unsubscribe_from_stream(stream_id, channels, markets,
                                                **kwargs)
 
