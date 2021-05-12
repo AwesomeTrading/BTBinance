@@ -266,7 +266,8 @@ class BinanceStore(CCXTStore):
     def _rate_limit(self):
         if self.exchange.enableRateLimit:
             self.exchange.throttle()
-            self.exchange.lastRestRequestTimestamp = self.exchange.milliseconds()
+            self.exchange.lastRestRequestTimestamp = self.exchange.milliseconds(
+            )
 
     def subscribe(self, channels, markets, events, q=None, **kwargs):
         self._rate_limit()
@@ -277,9 +278,17 @@ class BinanceStore(CCXTStore):
         elif q is None:
             q = queue.Queue()
 
+        # label of stream
+        label = ""
+        if len(channels) > 0:
+            label += channels[0] if type(channels) == list else channels
+        if len(markets) > 0:
+            label += "->" + markets[0]
+
+        # subscribe
         sid = self.ws.create_stream(channels,
                                     markets,
-                                    stream_label="dict",
+                                    stream_label=label,
                                     output="dict",
                                     api_key=self.exchange.apiKey,
                                     api_secret=self.exchange.secret,
@@ -301,9 +310,21 @@ class BinanceStore(CCXTStore):
         return q, sid
 
     def unsubscribe(self, stream_id, channels=[], markets=[], **kwargs):
-        self._rate_limit()
-        return self.ws.unsubscribe_from_stream(stream_id, channels, markets,
-                                               **kwargs)
+        if not channels and not markets:
+            ok = self.ws.stop_stream(stream_id)
+        else:
+            if type(markets) == str:
+                markets = [markets]
+            markets = [m.replace('/', '') for m in markets]
+
+            self._rate_limit()
+            ok = self.ws.unsubscribe_from_stream(stream_id, channels, markets,
+                                                 **kwargs)
+        
+        self.ws.wait_till_stream_has_stopped(stream_id)
+
+        logger.debug(self.ws.print_summary(disable_print=True))
+        return ok
 
     # stream data loop
     def _loop_stream(self):
