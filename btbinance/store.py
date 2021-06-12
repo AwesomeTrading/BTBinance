@@ -7,6 +7,7 @@ from __future__ import (absolute_import, division, print_function,
 import time
 import logging
 import threading
+import re
 
 import backtrader as bt
 from backtrader.utils.py3 import queue
@@ -47,6 +48,14 @@ class BinanceStore(CCXTStore):
         self.ws = BinanceWebSocketApiManager(exchange=exchange)
 
         self._loop_stream()
+
+    def _parse_markets(self, markets):
+        if isinstance(markets, str):
+            return [markets]
+
+        if isinstance(markets, list):
+            return [re.sub(r"[/_]", '', m) for m in markets]
+        raise Exception(f'cannot parse markets {markets}')
 
     # subscribe
     # account
@@ -140,13 +149,9 @@ class BinanceStore(CCXTStore):
 
     # bar
     def subscribe_bars(self, markets, interval, q=None, **kwargs):
-        markets = [m.replace('/', '') for m in markets]
+        markets = self._parse_markets(markets)
         channel = f"kline_{interval}"
-        if q is not None:
-            listeners = ["kline"]
-        else:
-            listeners = self._bar_listeners(markets, interval)
-
+        listeners = self._bar_listeners(markets, interval)
         return self.subscribe(channel, markets, listeners, q=q, **kwargs)
 
     def _bar_listeners(self, markets, interval):
@@ -194,7 +199,7 @@ class BinanceStore(CCXTStore):
 
     # ticker
     def subscribe_tickers(self, markets, **kwargs):
-        markets = [m.replace('/', '') for m in markets]
+        markets = self._parse_markets(markets)
         return self.subscribe('ticker', markets, ['24hrTicker'], **kwargs)
 
     def _parse_ticker(self, e):
@@ -223,7 +228,7 @@ class BinanceStore(CCXTStore):
 
     # mini ticker
     def subscribe_minitickers(self, markets, **kwargs):
-        markets = [m.replace('/', '') for m in markets]
+        markets = self._parse_markets(markets)
         return self.subscribe('miniTicker', markets, ['24hrMiniTicker'],
                               **kwargs)
 
@@ -244,7 +249,7 @@ class BinanceStore(CCXTStore):
 
     # book ticker
     def subscribe_bookticker(self, markets, **kwargs):
-        markets = [m.replace('/', '') for m in markets]
+        markets = self._parse_markets(markets)
         return self.subscribe('bookTicker', markets, ['bookTicker'], **kwargs)
 
     def _parse_bookticker(self, e):
@@ -315,15 +320,15 @@ class BinanceStore(CCXTStore):
         else:
             if type(markets) == str:
                 markets = [markets]
-            markets = [m.replace('/', '') for m in markets]
+            markets = self._parse_markets(markets)
 
             self._rate_limit()
             ok = self.ws.unsubscribe_from_stream(stream_id, channels, markets,
                                                  **kwargs)
-        
+
         self.ws.wait_till_stream_has_stopped(stream_id)
 
-        logger.debug(self.ws.print_summary(disable_print=True))
+        logger.info(self.ws.print_summary(disable_print=True))
         return ok
 
     # stream data loop
@@ -339,7 +344,7 @@ class BinanceStore(CCXTStore):
                 return
 
             buffer = self.ws.pop_stream_data_from_stream_buffer()
-            if buffer is False:
+            if buffer == False:
                 time.sleep(0.01)
                 continue
             if buffer is not None:

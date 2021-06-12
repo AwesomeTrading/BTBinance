@@ -2,16 +2,20 @@
 # -*- coding: utf-8; py-indent-offset:4 -*-
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
-
+import threading
 import time
-from collections import deque
-from datetime import datetime
+import logging
+import random
+from datetime import datetime, timedelta
 
-import backtrader as bt
 from backtrader.feed import DataBase
-from backtrader.utils.py3 import with_metaclass
+from backtrader.utils.py3 import with_metaclass, queue
+from backtrader import date2num
 
 from .store import BinanceStore
+from .utils import bar_starttime
+
+logger = logging.getLogger('BTBinanceFeed')
 
 
 class MetaBinanceFeed(DataBase.__class__):
@@ -36,23 +40,13 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
       - ``backfill_start`` (default: ``True``)
         Perform backfilling at the start. The maximum possible historical data
         will be fetched in a single request.
-
-    Changes From Ed's pacakge
-
-        - Added option to send some additional fetch_ohlcv_params. Some exchanges (e.g Bitmex)
-          support sending some additional fetch parameters.
-        - Added drop_newest option to avoid loading incomplete candles where exchanges
-          do not support sending ohlcv params to prevent returning partial data
-
     """
 
-    params = (
-        ('historical', False),  # only historical download
-        ('backfill_start', False),  # do backfilling at the start
-        ('fetch_ohlcv_params', {}),
-        ('ohlcv_limit', 20),
-        ('drop_newest', False),
-        ('debug', False),
+    params = dict(
+        historical=False,
+        backfill=True,
+        tick=False,
+        adjstarttime=False,
     )
 
     _store = BinanceStore
@@ -60,25 +54,133 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
     # States for the Finite State Machine in _load
     _ST_LIVE, _ST_HISTORBACK, _ST_OVER = range(3)
 
-    # def __init__(self, exchange, symbol, ohlcv_limit=None, config={}, retries=5):
     def __init__(self, **kwargs):
-        # self.store = BinanceStore(exchange, config, retries)
         self.store = self._store(**kwargs)
-        self._data = deque()  # data queue for price data
-        self._last_id = ''  # last processed trade id for ohlcv
-        self._last_ts = 0  # last processed timestamp for ohlcv
+        self._data = queue.Queue()
 
-    def start(self, ):
-        DataBase.start(self)
+    def haslivedata(self):
+        return self._state == self._ST_LIVE and self._data
+
+    def islive(self):
+        return not self.p.historical
+
+    def start(self):
+        super().start()
+        timeframe = self.store.get_exchange_timeframe(self._timeframe,
+                                                      self._compression)
+
+        self.put_notification(self.DELAYED)
 
         if self.p.fromdate:
             self._state = self._ST_HISTORBACK
-            self.put_notification(self.DELAYED)
-            self._fetch_ohlcv(self.p.fromdate, self.p.todate)
+            self._history_bars(
+                self.p.dataname,
+                timeframe,
+                self.p.fromdate,
+                self._data,
+            )
 
+        self._data.put("LIVE")
+        self._state = self._ST_LIVE
+
+        if self.p.tick:
+            self.store.subscribe_bars(
+                [self.p.dataname],
+                timeframe,
+                self._data,
+            )
         else:
-            self._state = self._ST_LIVE
-            self.put_notification(self.LIVE)
+            self._bars_stream(
+                [self.p.dataname],
+                timeframe,
+                self._data,
+            )
+
+    def _bars_stream(self, dataname, timeframe, q):
+        t = threading.Thread(target=self._t_thread_bars_stream,
+                             args=(
+                                 dataname,
+                                 timeframe,
+                                 q,
+                             ),
+                             daemon=True)
+        t.start()
+
+    def _t_thread_bars_stream(self, dataname, timeframe, q):
+        waitrandom = random.randint(5, 15)
+        while True:
+            # wait for next bar
+            dtnow = datetime.utcnow()
+            dtnext = bar_starttime(self._timeframe,
+                                   self._compression,
+                                   dt=dtnow,
+                                   offset=-1)
+            dtdiff = dtnext - dtnow
+            waittime = (dtdiff.days * 24 * 60 * 60) + dtdiff.seconds
+
+            # listen before new bar completes
+            if waittime > waitrandom:
+                waittime = waittime - waitrandom
+                logger.debug("get new bars: sleep for %ss", waittime)
+                time.sleep(waittime)
+
+            # get data
+            tmp_q, stream_id = self.store.subscribe_bars(
+                dataname,
+                timeframe,
+            )
+            self._get_closed_bar(tmp_q, q, stream_id)
+
+    def _get_closed_bar(self, in_q, out_q, stream_id):
+        while True:
+            try:
+                msg = in_q.get(timeout=1)
+            except queue.Empty:
+                time.sleep(0.1)
+                continue
+
+            msg = msg['bar']
+            if msg['closed']:
+                bar = [
+                    msg['start'],
+                    msg['open'],
+                    msg['high'],
+                    msg['low'],
+                    msg['close'],
+                    msg['volume'],
+                ]
+                out_q.put(bar)
+                return self.store.unsubscribe(stream_id)
+
+    def _history_bars(self, dataname, timeframe, fromdate, q, limit=1500):
+        bars = []
+        begindate = fromdate.timestamp()
+        while True:
+            raws = self.store.fetch_ohlcv(
+                dataname,
+                timeframe,
+                since=begindate,
+                limit=limit,
+            )
+
+            if len(raws) == 0:
+                break
+
+            bars.extend(raws)
+            if len(raws) < limit:
+                break
+
+            begindate = raws[-1][0] + 1
+
+        # remove latest uncompleted bar
+        bars = bars[:-1]
+
+        for i in range(0, len(bars)):
+            if i == 0 or bars[i][0] <= bars[i - 1][0]:
+                continue
+            q.put(bars[i])
+
+        return q
 
     def _load(self):
         if self._state == self._ST_OVER:
@@ -86,179 +188,59 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
         while True:
             if self._state == self._ST_LIVE:
-                if self._timeframe == bt.TimeFrame.Ticks:
-                    return self._load_ticks()
-                else:
-                    self._fetch_ohlcv()
-                    ret = self._load_ohlcv()
-                    if self.p.debug:
-                        print('----     LOAD    ----')
-                        print('{} Load OHLCV Returning: {}'.format(
-                            datetime.utcnow(), ret))
-                    return ret
-
-            elif self._state == self._ST_HISTORBACK:
-                ret = self._load_ohlcv()
-                if ret:
-                    return ret
-                else:
-                    # End of historical data
-                    if self.p.historical:  # only historical
-                        self.put_notification(self.DISCONNECTED)
-                        self._state = self._ST_OVER
-                        return False  # end of historical
-                    else:
-                        self._state = self._ST_LIVE
-                        self.put_notification(self.LIVE)
-                        continue
-
-    def _fetch_ohlcv(self, fromdate=None, todate=None):
-        """Fetch OHLCV data into self._data queue"""
-        granularity = self.store.get_granularity(self._timeframe,
-                                                 self._compression)
-
-        if fromdate:
-            since = int(
-                (fromdate - datetime(1970, 1, 1)).total_seconds() * 1000)
-        else:
-            if self._last_ts > 0:
-                since = self._last_ts
-            else:
-                since = None
-
-        if todate:
-            enddt = int((todate - datetime(1970, 1, 1)).total_seconds() * 1000)
-        else:
-            enddt = 0
-
-        limit = self.p.ohlcv_limit
-
-        while True:
-            dlen = len(self._data)
-
-            if self.p.debug:
-                # TESTING
-                since_dt = datetime.utcfromtimestamp(
-                    since // 1000) if since is not None else 'NA'
-                print('---- NEW REQUEST ----')
-                print(
-                    '{} - Requesting: Since TS {} Since date {} granularity {}, limit {}, params'
-                    .format(datetime.utcnow(), since, since_dt, granularity,
-                            limit, self.p.fetch_ohlcv_params))
-                data = sorted(
-                    self.store.fetch_ohlcv(self.p.dataname,
-                                           timeframe=granularity,
-                                           since=since,
-                                           limit=limit,
-                                           params=self.p.fetch_ohlcv_params))
                 try:
-                    for i, ohlcv in enumerate(data):
-                        tstamp, open_, high, low, close, volume = ohlcv
-                        print('{} - Data {}: {} - TS {} Time {}'.format(
-                            datetime.utcnow(), i,
-                            datetime.utcfromtimestamp(tstamp // 1000), tstamp,
-                            (time.time() * 1000)))
-                        # ------------------------------------------------------------------
-                except IndexError:
-                    print('Index Error: Data = {}'.format(data))
-                print('---- REQUEST END ----')
-            else:
+                    msg = self._data.get(timeout=self._qcheck)
+                except queue.Empty:
+                    time.sleep(0.1)
+                    return None
 
-                data = sorted(
-                    self.store.fetch_ohlcv(self.p.dataname,
-                                           timeframe=granularity,
-                                           since=since,
-                                           limit=limit,
-                                           params=self.p.fetch_ohlcv_params))
+                if isinstance(msg, list):
+                    ret = self._put_bar(msg)
+                elif isinstance(msg, str):
+                    if msg == "LIVE" and \
+                        self._laststatus != self.LIVE:
+                        self.put_notification(self.LIVE)
+                    ret = None
+                else:
+                    msg = msg['bar']
+                    bar = [
+                        msg['start'],
+                        msg['open'],
+                        msg['high'],
+                        msg['low'],
+                        msg['close'],
+                        msg['volume'],
+                    ]
+                    if self.p.tick:
+                        ret = self._put_bar(bar)
+                    elif msg['closed']:
+                        ret = self._put_bar(bar)
+                    else:
+                        ret = None
+                if ret:
+                    return True
 
-            # Check to see if dropping the latest candle will help with
-            # exchanges which return partial data
-            if self.p.drop_newest:
-                del data[-1]
+    def _put_bar(self, msg):
+        dtobj = datetime.utcfromtimestamp(float(msg[0] / 1000))
+        if self.p.adjstarttime:
+            # move time to start time of next bar
+            # and subtract 0.1 miliseconds (ensures no
+            # rounding issues, 10 microseconds is minimum)
+            dtobj = bar_starttime(self.p.timeframe, self.p.compression, dtobj,
+                                  -1) - timedelta(microseconds=100)
+        dt = date2num(dtobj, tz=self.p.tz)
+        dt1 = self.lines.datetime[-1]
+        if dt < dt1:
+            return False  # time already seen
+        if dt == dt1:
+            self.backwards(force=True)
 
-            for ohlcv in data:
-
-                # for ohlcv in sorted(self.store.fetch_ohlcv(self.p.dataname, timeframe=granularity,
-                #                                           since=since, limit=limit, params=self.p.fetch_ohlcv_params)):
-
-                if None in ohlcv:
-                    continue
-
-                tstamp = ohlcv[0]
-
-                # Prevent from loading incomplete data
-                # if tstamp > (time.time() * 1000):
-                #    continue
-
-                if tstamp > self._last_ts:
-                    if self.p.debug:
-                        print('Adding: {}'.format(ohlcv))
-                    self._data.append(ohlcv)
-                    self._last_ts = tstamp
-
-            if enddt > 0:
-                if self._last_ts >= enddt:
-                    break
-                since = self._last_ts
-                continue
-
-            if dlen == len(self._data):
-                break
-
-    def _load_ticks(self):
-        if self._last_id is None:
-            # first time get the latest trade only
-            trades = [self.store.fetch_trades(self.p.dataname)[-1]]
-        else:
-            trades = self.store.fetch_trades(self.p.dataname)
-
-        for trade in trades:
-            trade_id = trade['id']
-
-            if trade_id > self._last_id:
-                trade_time = datetime.strptime(trade['datetime'],
-                                               '%Y-%m-%dT%H:%M:%S.%fZ')
-                self._data.append((trade_time, float(trade['price']),
-                                   float(trade['amount'])))
-                self._last_id = trade_id
-
-        try:
-            trade = self._data.popleft()
-        except IndexError:
-            return None  # no data in the queue
-
-        trade_time, price, size = trade
-
-        self.lines.datetime[0] = bt.date2num(trade_time)
-        self.lines.open[0] = price
-        self.lines.high[0] = price
-        self.lines.low[0] = price
-        self.lines.close[0] = price
-        self.lines.volume[0] = size
-
+        # Common fields
+        self.lines.datetime[0] = dt
+        self.lines.open[0] = float(msg[1])
+        self.lines.high[0] = float(msg[2])
+        self.lines.low[0] = float(msg[3])
+        self.lines.close[0] = float(msg[4])
+        self.lines.volume[0] = float(msg[5])
+        self.lines.openinterest[0] = 0.0
         return True
-
-    def _load_ohlcv(self):
-        try:
-            ohlcv = self._data.popleft()
-        except IndexError:
-            return None  # no data in the queue
-
-        tstamp, open_, high, low, close, volume = ohlcv
-
-        dtime = datetime.utcfromtimestamp(tstamp // 1000)
-
-        self.lines.datetime[0] = bt.date2num(dtime)
-        self.lines.open[0] = open_
-        self.lines.high[0] = high
-        self.lines.low[0] = low
-        self.lines.close[0] = close
-        self.lines.volume[0] = volume
-
-        return True
-
-    def haslivedata(self):
-        return self._state == self._ST_LIVE and self._data
-
-    def islive(self):
-        return not self.p.historical
