@@ -66,6 +66,10 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def start(self):
         super().start()
+
+        # Kickstart store and get queue to wait on
+        self.store.start(data=self)
+
         timeframe = self.store.get_exchange_timeframe(self._timeframe,
                                                       self._compression)
 

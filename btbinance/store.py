@@ -49,6 +49,7 @@ class BinanceStore(CCXTStore):
 
         self._loop_stream()
 
+    ### low level functions
     def parse_exchange_symbol(self, symbol):
         return re.sub(r"[/_]", '', symbol)
 
@@ -90,7 +91,7 @@ class BinanceStore(CCXTStore):
             positions.append(
                 dict(
                     symbol=p["s"],  # Symbol
-                    amount=p["pa"],  # Position Amount
+                    amount=float(p["pa"]),  # Position Amount
                     price=float(p["ep"]),  # Entry Price
                     accum=float(p["cr"]),  # (Pre-fee) Accumulated Realized
                     pnl=float(p["up"]),  # Unrealized PnL
@@ -331,7 +332,7 @@ class BinanceStore(CCXTStore):
 
         self.ws.wait_till_stream_has_stopped(stream_id)
 
-        logger.info(self.ws.print_summary(disable_print=True))
+        # logger.info(self.ws.print_summary(disable_print=True))
         return ok
 
     # stream data loop

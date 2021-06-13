@@ -51,17 +51,6 @@ order_statuses_reversed.update({
     'new_insurance': Order.Margin,
 })
 
-# class BinanceOrder(OrderBase):
-#     def __init__(self, owner, data, ccxt_order):
-#         self.owner = owner
-#         self.data = data
-#         self.ccxt_order = ccxt_order
-#         self.executed_fills = []
-#         self.ordtype = self.Buy if ccxt_order['side'] == 'buy' else self.Sell
-#         self.size = float(ccxt_order['amount'])
-
-#         super(BinanceOrder, self).__init__()
-
 
 class MetaBinanceBroker(BrokerBase.__class__):
     def __init__(cls, name, bases, dct):
@@ -147,6 +136,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 pass
 
         self.store = BinanceStore(**kwargs)
+        self.datas = dict()
 
         self.currency = self.store.currency
         self.debug = debug
@@ -167,6 +157,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def start(self):
         super().start()
+        self.store.start(broker=self)
         self._loop_account()
 
     def get_balance(self):
@@ -208,6 +199,17 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             pos = pos.clone()
         return pos
 
+    # data
+    def _get_data(self, name):
+        symbol = name.replace('/', '').replace('_', '')
+        return self.datas.get(symbol, None)
+
+    def data_started(self, data):
+        symbol = data._name.replace('/', '').replace('_', '')
+        if symbol in self.datas:
+            raise Exception("Data is duplicated")
+        self.datas[symbol] = data
+
     # account
     def _loop_account(self):
         q, stream_id = self.store.subscribe_my_account()
@@ -234,11 +236,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                     self.value = balance['cross']
 
                 logger.warn("Need to handle positions")
-                # positions = []
-                # for p in account['positions']:
-                #     position = self._parse_position(p)
-                #     positions.append(position)
-                # self._on_positions(positions)
+                for p in account['positions']:
+                    self._on_position(p)
 
             elif 'order' in event:
                 # parse order
@@ -247,6 +246,18 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 # broadcast
                 self._on_order(raw)
 
+    # position
+    def _on_position(self, raw):
+        symbol = raw['symbol']
+        price = raw['price']
+        size = raw['amount']
+        data = self._get_data(symbol)
+        if data is None:
+            return
+
+        pos = self.getposition(data, clone=False)
+        pos.update(size, price)
+
     # order
     def orderstatus(self, order):
         o = self.orders[order.ref]
@@ -254,9 +265,16 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     # order update
     def _on_order(self, raw):
+        status = order_statuses_reversed[raw['status'].lower()]
+        symbol = raw['symbol']
+        size = raw['amount']
+        price = raw['price']
+
         client_id = raw.get('clientOrderId', None)
         if not client_id or 'web_' in client_id:
-            logger.warn(f"Order without client id cannot be process: {raw}")
+            logger.warn(f"External order: {raw}")
+            if status in [Order.Partial, Order.Completed]:
+                self._fill_external(symbol, size, price)
             return
 
         oref = int(client_id.split("|", 1)[0])
@@ -264,17 +282,13 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             logger.warn(f"Order with ref {oref} not found: {raw}")
             return
 
-        size = raw['amount']
-        price = raw['price']
-        status = order_statuses_reversed[raw['status'].lower()]
-
         if status == Order.Submitted:
             self._submit(oref)
         elif status == Order.Accepted:
             self._accept(oref)
         elif status == Order.Canceled:
             self._cancel(oref)
-        elif status == Order.Partial or status == Order.Completed:
+        elif status in [Order.Partial, Order.Completed]:
             self._fill(oref, size, price, filled=status == Order.Completed)
         elif status == Order.Rejected:
             self._reject(oref)
@@ -391,6 +405,40 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self.notify(order)
             self._bracketize(order)
             self._ococheck(order)
+
+    def _fill_external(self, symbol, size, price):
+        logger.debug("Fill external order: {}, {}, {}".format(
+            symbol, size, price))
+        if size == 0:
+            return
+
+        data = self._get_data(symbol)
+        if data is None:
+            return
+
+        pos = self.getposition(data, clone=False)
+        pos.update(size, price)
+
+        if size < 0:
+            order = SellOrder(data=data,
+                              size=size,
+                              price=price,
+                              exectype=Order.Market,
+                              simulated=True)
+        else:
+            order = BuyOrder(data=data,
+                             size=size,
+                             price=price,
+                             exectype=Order.Market,
+                             simulated=True)
+
+        order.addcomminfo(self.getcommissioninfo(data))
+        order.execute(0, size, price, 0, 0.0, 0.0, size, 0.0, 0.0, 0.0, 0.0,
+                      size, price)
+        order.completed()
+
+        self.notify(order)
+        self._ococheck(order)
 
     # place order
     def _bracketize(self, order, cancel=False):
