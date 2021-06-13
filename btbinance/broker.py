@@ -43,6 +43,7 @@ order_statuses: Final = {
 }
 order_statuses_reversed: Final = {v: k for k, v in order_statuses.items()}
 order_statuses_reversed.update({
+    'open': Order.Submitted,
     'new': Order.Accepted,
     'filled': Order.Completed,
     'partially_filled': Order.Partial,
@@ -169,7 +170,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._loop_account()
 
     def get_balance(self):
-        self.store.get_balance()
         self.cash = self.store._cash
         self.value = self.store._value
         return self.cash, self.value
@@ -208,137 +208,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             pos = pos.clone()
         return pos
 
-    # def next(self):
-    #     if self.debug:
-    #         print('Broker next() called')
-
-    #     for o_order in list(self.open_orders):
-    #         oID = o_order.ccxt_order['id']
-
-    #         # Print debug before fetching so we know which order is giving an
-    #         # issue if it crashes
-    #         if self.debug:
-    #             print('Fetching Order ID: {}'.format(oID))
-
-    #         # Get the order
-    #         ccxt_order = self.store.fetch_order(oID, o_order.data.p.dataname)
-
-    #         # Check for new fills
-    #         if 'trades' in ccxt_order:
-    #             for fill in ccxt_order['trades']:
-    #                 if fill not in o_order.executed_fills:
-    #                     o_order.execute(fill['datetime'], fill['amount'],
-    #                                     fill['price'], 0, 0.0, 0.0, 0, 0.0,
-    #                                     0.0, 0.0, 0.0, 0, 0.0)
-    #                     o_order.executed_fills.append(fill['id'])
-
-    #         if self.debug:
-    #             print(json.dumps(ccxt_order, indent=self.indent))
-
-    #         # Check if the order is closed
-    #         if ccxt_order[self.mappings['closed_order']
-    #                       ['key']] == self.mappings['closed_order']['value']:
-    #             pos = self.getposition(o_order.data, clone=False)
-    #             pos.update(o_order.size, o_order.price)
-    #             o_order.completed()
-    #             self.notify(o_order)
-    #             self.open_orders.remove(o_order)
-    #             self.get_balance()
-
-    # def _submit(self, owner, data, exectype, side, amount, price, params):
-    #     order_type = self.order_types.get(exectype) if exectype else 'market'
-    #     created = int(data.datetime.datetime(0).timestamp() * 1000)
-    #     # Extract Binance specific params if passed to the order
-    #     params = params['params'] if 'params' in params else params
-    #     params[
-    #         'created'] = created  # Add timestamp of order creation for backtesting
-    #     ret_ord = self.store.create_order(symbol=data.p.dataname,
-    #                                       order_type=order_type,
-    #                                       side=side,
-    #                                       amount=amount,
-    #                                       price=price,
-    #                                       params=params)
-
-    #     _order = self.store.fetch_order(ret_ord['id'], data.p.dataname)
-
-    #     order = BinanceOrder(owner, data, _order)
-    #     order.price = ret_ord['price']
-    #     self.open_orders.append(order)
-
-    #     self.notify(order)
-    #     return order
-
-    # def buy(self,
-    #         owner,
-    #         data,
-    #         size,
-    #         price=None,
-    #         plimit=None,
-    #         exectype=None,
-    #         valid=None,
-    #         tradeid=0,
-    #         oco=None,
-    #         trailamount=None,
-    #         trailpercent=None,
-    #         **kwargs):
-    #     del kwargs['parent']
-    #     del kwargs['transmit']
-    #     return self._submit(owner, data, exectype, 'buy', size, price, kwargs)
-
-    # def sell(self,
-    #          owner,
-    #          data,
-    #          size,
-    #          price=None,
-    #          plimit=None,
-    #          exectype=None,
-    #          valid=None,
-    #          tradeid=0,
-    #          oco=None,
-    #          trailamount=None,
-    #          trailpercent=None,
-    #          **kwargs):
-    #     del kwargs['parent']
-    #     del kwargs['transmit']
-    #     return self._submit(owner, data, exectype, 'sell', size, price, kwargs)
-
-    # def cancel(self, order):
-    #     oID = order.ccxt_order['id']
-
-    #     if self.debug:
-    #         print('Broker cancel() called')
-    #         print('Fetching Order ID: {}'.format(oID))
-
-    #     # check first if the order has already been filled otherwise an error
-    #     # might be raised if we try to cancel an order that is not open.
-    #     ccxt_order = self.store.fetch_order(oID, order.data.p.dataname)
-
-    #     if self.debug:
-    #         print(json.dumps(ccxt_order, indent=self.indent))
-
-    #     if ccxt_order[self.mappings['closed_order']
-    #                   ['key']] == self.mappings['closed_order']['value']:
-    #         return order
-
-    #     ccxt_order = self.store.cancel_order(oID, order.data.p.dataname)
-
-    #     if self.debug:
-    #         print(json.dumps(ccxt_order, indent=self.indent))
-    #         print('Value Received: {}'.format(
-    #             ccxt_order[self.mappings['canceled_order']['key']]))
-    #         print('Value Expected: {}'.format(
-    #             self.mappings['canceled_order']['value']))
-
-    #     if ccxt_order[self.mappings['canceled_order']
-    #                   ['key']] == self.mappings['canceled_order']['value']:
-    #         self.open_orders.remove(order)
-    #         order.cancel()
-    #         self.notify(order)
-    #     return order
-
-    # def get_orders_open(self, safe=False):
-    #     return self.store.fetch_open_orders()
-
+    # account
     def _loop_account(self):
         q, stream_id = self.store.subscribe_my_account()
         t = threading.Thread(target=self._t_loop_account,
@@ -385,7 +255,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     # order update
     def _on_order(self, raw):
         client_id = raw.get('clientOrderId', None)
-        if not client_id:
+        if not client_id or 'web_' in client_id:
             logger.warn(f"Order without client id cannot be process: {raw}")
             return
 
@@ -521,7 +391,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self.notify(order)
             self._bracketize(order)
             self._ococheck(order)
-            self.store.get_balance()
 
     # place order
     def _bracketize(self, order, cancel=False):
