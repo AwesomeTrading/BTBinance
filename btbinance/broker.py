@@ -714,7 +714,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                                        params=params)
 
         order.addinfo(id=o['id'])
-        print(order, o)
+        self._submit(order.ref)
         return order
 
     def cancel(self, order: Order):
