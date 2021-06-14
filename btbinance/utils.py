@@ -101,3 +101,24 @@ def period_name(timeframe: TimeFrame, compression: int):
         (timeframe, compression),
         TimeFrame.Names[timeframe],
     )
+
+def _val(obj, keys, default=None):
+    if type(keys) == str:
+        if keys in obj:
+            return obj[keys]
+    elif type(keys) == list:
+        for key in keys:
+            if key in obj:
+                return obj[key]
+            elif '.' in key:
+                subkeys = key.split('.')
+                subobj = obj
+                found = True
+                for subkey in subkeys:
+                    if subkey not in subobj:
+                        found = False
+                        break
+                    subobj = subobj[subkey]
+                if found:
+                    return subobj
+    return default

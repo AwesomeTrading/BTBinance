@@ -4,6 +4,7 @@ from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
 import collections
+import itertools
 import threading
 import time
 import logging
@@ -14,6 +15,7 @@ from backtrader.position import Position
 from backtrader.utils.py3 import queue, with_metaclass
 
 from .store import BinanceStore
+from .utils import _val
 
 logger = logging.getLogger('BinanceBroker')
 
@@ -122,6 +124,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         }
     }
 
+    params = dict(rebuild=True)
+
     def __init__(self, broker_mapping=None, debug=False, **kwargs):
         super(BinanceBroker, self).__init__()
 
@@ -189,17 +193,25 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         except queue.Empty:
             return None
 
-    def notify(self, order):
-        self.notifies.put(order)
+    def notify(self, order: Order):
+        self.notifies.put(order.clone())
 
-    def getposition(self, data, clone=True):
-        # return self.store.getposition(data._dataname, clone=clone)
-        pos = self.positions[data._dataname]
-        if clone:
-            pos = pos.clone()
-        return pos
+    def live(self):
+        # First time live data
+        if self.p.rebuild:
+            self.rebuild_environement()
+            self.p.rebuild = False
 
-    # data
+    def rebuild_environement(self):
+        """
+        Rebuild positions and orders when restart strategy
+        """
+        if self.p.rebuild:
+            self._rebuild_positions()
+            self._rebuild_orders()
+            self.p.rebuild = False
+
+    ### data
     def _get_data(self, name):
         symbol = name.replace('/', '').replace('_', '')
         return self.datas.get(symbol, None)
@@ -210,8 +222,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             raise Exception("Data is duplicated")
         self.datas[symbol] = data
 
-    # account
+    ### account
     def _loop_account(self):
+        # listen for account changes
         q, stream_id = self.store.subscribe_my_account()
         t = threading.Thread(target=self._t_loop_account,
                              args=(
@@ -235,103 +248,157 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                     self.cash = balance['wallet']
                     self.value = balance['cross']
 
-                logger.warn("Need to handle positions")
-                for p in account['positions']:
-                    self._on_position(p)
+                # logger.warn("Need to handle positions")
+                # self._on_positions(account['positions'])
 
             elif 'order' in event:
-                # parse order
                 raw = event['order']
-
-                # broadcast
                 self._on_order(raw)
+            else:
+                raise Exception(f"Event cannot handle: {event}")
 
-    # position
-    def _on_position(self, raw):
-        symbol = raw['symbol']
-        price = raw['price']
-        size = raw['amount']
-        data = self._get_data(symbol)
-        if data is None:
-            return
+    ### position
+    def getposition(self, data, clone=True):
+        # return self.store.getposition(data._dataname, clone=clone)
+        pos = self.positions[data._dataname]
+        if clone:
+            pos = pos.clone()
+        return pos
 
-        pos = self.getposition(data, clone=False)
-        pos.update(size, price)
+    def _rebuild_positions(self):
+        symbols = [d._name for d in self.datas.values()]
+        positions = self.store.fetch_my_positions(symbols)
+        self._on_positions(positions)
 
-    # order
+    def _on_positions(self, raws):
+        # '''Only run on first time load positions'''
+        # if getattr(self, '_position_inited', None):
+        #     return
+        # self._position_inited = True
+
+        for raw in raws:
+            symbol = raw['symbol']
+            price = float(_val(raw, ['price', 'entryPrice']))
+            size = float(_val(raw, ['amount', 'positionAmt']))
+            pos = self.positions[symbol]
+            pos.set(size, price)
+
+    ### order
     def orderstatus(self, order):
-        o = self.orders[order.ref]
-        return o.status
+        # o = self.orders[order.ref]
+        return order.status
 
     # order update
+    def _parse_order_info(self, raw):
+        '''
+        raw: bt:r_2:p_1
+        '''
+        info = dict(id=raw)
+        if raw and raw.startswith("bt:"):
+            splited = raw.split('bt:', 1)[1].split("_")
+            zipped = dict(zip(splited[::2], splited[1::2]))
+
+            # ref
+            ref = zipped.get('r', None)
+            if ref:
+                info['ref'] = int(ref)
+
+            # parent ref
+            pref = zipped.get('p', None)
+            if pref:
+                info['pref'] = int(pref)
+
+        return info
+
+    def _rebuild_orders(self):
+        # symbols = [d._name for d in self.datas]
+        raws = self.store.fetch_my_open_orders()
+        for raw in raws:
+            self._on_order(raw)
+
     def _on_order(self, raw):
         status = order_statuses_reversed[raw['status'].lower()]
         symbol = raw['symbol']
-        size = raw['amount']
+
         price = raw['price']
+        if not price:
+            price = raw['stopPrice']
+
+        size = raw['amount']
+        if 'SELL' in raw['side'].upper():
+            size = -size
 
         client_id = raw.get('clientOrderId', None)
-        if not client_id or 'web_' in client_id:
+        info = self._parse_order_info(client_id)
+
+        oref = info.get('ref', None)
+        if not oref:
             logger.warn(f"External order: {raw}")
             if status in [Order.Partial, Order.Completed]:
                 self._fill_external(symbol, size, price)
             return
 
-        oref = int(client_id.split("|", 1)[0])
         if oref not in self.orders:
-            logger.warn(f"Order with ref {oref} not found: {raw}")
-            return
+            Order.refbasis = itertools.count(oref)
+            data = self._get_data(symbol)
+            oobject = BuyOrder if size > 0 else SellOrder
+            order = oobject(
+                data=data,
+                size=size,
+                price=price,
+                exectype=Order.Limit,
+                transmit=True,
+                simulated=True,
+            )
+        else:
+            order = self.orders[oref]
 
         if status == Order.Submitted:
-            self._submit(oref)
+            self._submit(order)
         elif status == Order.Accepted:
-            self._accept(oref)
+            self._accept(order)
         elif status == Order.Canceled:
-            self._cancel(oref)
+            self._cancel(order)
         elif status in [Order.Partial, Order.Completed]:
-            self._fill(oref, size, price, filled=status == Order.Completed)
+            self._fill(order, size, price, filled=status == Order.Completed)
         elif status == Order.Rejected:
-            self._reject(oref)
+            self._reject(order)
         elif status == Order.Expired:
-            self._expire(oref)
+            self._expire(order)
         else:
             raise Exception(f"Status {status} is invalid: {raw}")
 
-    def _submit(self, oref):
-        order = self.orders[oref]
+    def _submit(self, order):
         if order.status == Order.Submitted:
             return
 
         order.submit(self)
         self.notify(order)
         # submit for stop order and limit order of bracket
-        bracket = self.brackets.get(oref, [])
+        bracket = self.brackets.get(order.ref, [])
         for o in bracket:
-            if o.ref != oref:
+            if o.ref != order.ref:
                 self._submit(o.ref)
 
-    def _reject(self, oref):
-        order = self.orders[oref]
+    def _reject(self, order):
         order.reject(self)
         self.notify(order)
         self._bracketize(order, cancel=True)
         self._ococheck(order)
 
-    def _accept(self, oref):
-        order = self.orders[oref]
+    def _accept(self, order):
         if order.status == Order.Accepted:
             return
 
         order.accept()
         self.notify(order)
         # accept for stop order and limit order of bracket
-        bracket = self.brackets.get(oref, [])
+        bracket = self.brackets.get(order.ref, [])
         for o in bracket:
-            if o.ref != oref:
+            if o.ref != order.ref:
                 self._accept(o.ref)
 
-    def _cancel(self, oref):
-        order = self.orders[oref]
+    def _cancel(self, order):
         if order.status == Order.Canceled:
             return
 
@@ -340,20 +407,18 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._bracketize(order, cancel=True)
         self._ococheck(order)
 
-    def _expire(self, oref):
-        order = self.orders[oref]
+    def _expire(self, order):
         order.expire()
         self.notify(order)
         self._bracketize(order, cancel=True)
         self._ococheck(order)
 
-    def _fill(self, oref, size, price, filled=False, **kwargs):
+    def _fill(self, order: Order, size, price, filled=False, **kwargs):
         if size == 0 and not filled:
             return
-        logger.debug("Fill order: {}, {}, {}".format(oref, size, price,
-                                                     filled))
+        logger.debug("Fill order: {}, {}, {}, {}".format(
+            order.ref, size, price, filled))
 
-        order = self.orders[oref]
         if not order.alive():  # can be a bracket
             pref = getattr(order.parent, "ref", order.ref)
             if pref not in self.brackets:
@@ -386,6 +451,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         data = order.data
         pos = self.getposition(data, clone=False)
         psize, pprice, opened, closed = pos.update(size, price)
+        # psize, pprice, opened, closed = pos.size, pos.price, 0, pos.size
         # comminfo = self.getcommissioninfo(data)
 
         closedvalue = closedcomm = 0.0
@@ -419,18 +485,12 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         pos = self.getposition(data, clone=False)
         pos.update(size, price)
 
-        if size < 0:
-            order = SellOrder(data=data,
-                              size=size,
-                              price=price,
-                              exectype=Order.Market,
-                              simulated=True)
-        else:
-            order = BuyOrder(data=data,
-                             size=size,
-                             price=price,
-                             exectype=Order.Market,
-                             simulated=True)
+        maker = BuyOrder if size > 0 else SellOrder
+        order = maker(data=data,
+                      size=size,
+                      price=price,
+                      exectype=Order.Market,
+                      simulated=True)
 
         order.addcomminfo(self.getcommissioninfo(data))
         order.execute(0, size, price, 0, 0.0, 0.0, size, 0.0, 0.0, 0.0, 0.0,
@@ -541,6 +601,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             trailpercent=trailpercent,
             parent=parent,
             transmit=transmit,
+            # simulated=True,
         )
 
         order.addinfo(**kwargs)
@@ -578,6 +639,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             trailpercent=trailpercent,
             parent=parent,
             transmit=transmit,
+            # simulated=True,
         )
 
         order.addinfo(**kwargs)
@@ -600,9 +662,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         #     params['timeInForce'] = order.valid
 
         # order ref
-        client_id = f"{order.ref}"
+        client_id = f"bt:r_{order.ref}"
         if order.parent:
-            client_id += f":{order.parent.ref}"
+            client_id += f":p_{order.parent.ref}"
         params['newClientOrderId'] = client_id
 
         # order type
@@ -622,17 +684,19 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # amount
         amount = abs(order.size)
-
-        o = self.store.create_my_order(symbol=order.data._name,
-                                       order_type=order_type,
-                                       side=side,
-                                       amount=amount,
-                                       price=order.price,
-                                       params=params)
-
-        order.addinfo(id=o['id'])
-        self._submit(order.ref)
-        return order
+        try:
+            o = self.store.create_my_order(symbol=order.data._name,
+                                           order_type=order_type,
+                                           side=side,
+                                           amount=amount,
+                                           price=order.price,
+                                           params=params)
+            order.addinfo(id=o['id'])
+            # self._submit(order.ref)
+            # self.notify(order)
+            return order
+        except Exception as e:
+            logger.error(e)
 
     def cancel(self, order: Order):
         if not self.orders.get(order.ref, False):

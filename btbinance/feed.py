@@ -204,6 +204,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                     if msg == "LIVE" and \
                         self._laststatus != self.LIVE:
                         self.put_notification(self.LIVE)
+                        self.store.live()
                     ret = None
                 else:
                     msg = msg['bar']
