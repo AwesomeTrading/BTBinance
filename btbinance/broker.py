@@ -213,14 +213,12 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### data
     def _get_data(self, name):
-        symbol = name.replace('/', '').replace('_', '')
-        return self.datas.get(symbol, None)
+        return self.datas.get(name, None)
 
     def data_started(self, data):
-        symbol = data._name.replace('/', '').replace('_', '')
-        if symbol in self.datas:
+        if data._name in self.datas:
             raise Exception("Data is duplicated")
-        self.datas[symbol] = data
+        self.datas[data._name] = data
 
     ### account
     def _loop_account(self):
@@ -249,7 +247,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                     self.value = balance['cross']
 
                 # logger.warn("Need to handle positions")
-                # self._on_positions(account['positions'])
+                self._on_positions(account['positions'])
 
             elif 'order' in event:
                 raw = event['order']
@@ -319,12 +317,14 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def _on_order(self, raw):
         status = order_statuses_reversed[raw['status'].lower()]
         symbol = raw['symbol']
-
         price = raw['price']
+        size = raw['amount']
+
+        if status in [Order.Partial, Order.Completed]:
+            size = raw['filled']
+            price = raw['average']
         if not price:
             price = raw['stopPrice']
-
-        size = raw['amount']
         if 'SELL' in raw['side'].upper():
             size = -size
 
@@ -347,7 +347,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 size=size,
                 price=price,
                 exectype=Order.Limit,
-                transmit=True,
                 simulated=True,
             )
         else:
@@ -378,7 +377,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         bracket = self.brackets.get(order.ref, [])
         for o in bracket:
             if o.ref != order.ref:
-                self._submit(o.ref)
+                self._submit(o)
 
     def _reject(self, order):
         order.reject(self)
@@ -396,7 +395,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         bracket = self.brackets.get(order.ref, [])
         for o in bracket:
             if o.ref != order.ref:
-                self._accept(o.ref)
+                self._accept(o)
 
     def _cancel(self, order):
         if order.status == Order.Canceled:
@@ -450,8 +449,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         data = order.data
         pos = self.getposition(data, clone=False)
-        psize, pprice, opened, closed = pos.update(size, price)
-        # psize, pprice, opened, closed = pos.size, pos.price, 0, pos.size
+        # psize, pprice, opened, closed = pos.update(size, price)
+        psize, pprice, opened, closed = pos.size, pos.price, pos.size, pos.size - size
         # comminfo = self.getcommissioninfo(data)
 
         closedvalue = closedcomm = 0.0
@@ -482,15 +481,17 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if data is None:
             return
 
-        pos = self.getposition(data, clone=False)
-        pos.update(size, price)
+        # pos = self.getposition(data, clone=False)
+        # pos.update(size, price)
 
         maker = BuyOrder if size > 0 else SellOrder
-        order = maker(data=data,
-                      size=size,
-                      price=price,
-                      exectype=Order.Market,
-                      simulated=True)
+        order = maker(
+            data=data,
+            size=size,
+            price=price,
+            exectype=Order.Market,
+            simulated=True,
+        )
 
         order.addcomminfo(self.getcommissioninfo(data))
         order.execute(0, size, price, 0, 0.0, 0.0, size, 0.0, 0.0, 0.0, 0.0,
@@ -516,12 +517,12 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
             elif len(br) == 2:  # filling a children
                 oidx = br.index(order)  # find index to filled (0 or 1)
-                self._cancel(br[1 - oidx].ref)  # cancel remaining (1 - 0 -> 1)
+                self._cancel(br[1 - oidx])  # cancel remaining (1 - 0 -> 1)
         else:
             # Any cancellation cancel the others
             for o in br:
                 if o.alive():
-                    self._cancel(o.ref)
+                    self._cancel(o)
 
     def _ococheck(self, order):
         if order.alive():
@@ -601,7 +602,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             trailpercent=trailpercent,
             parent=parent,
             transmit=transmit,
-            # simulated=True,
         )
 
         order.addinfo(**kwargs)
@@ -639,7 +639,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             trailpercent=trailpercent,
             parent=parent,
             transmit=transmit,
-            # simulated=True,
         )
 
         order.addinfo(**kwargs)
@@ -692,8 +691,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                                            price=order.price,
                                            params=params)
             order.addinfo(id=o['id'])
-            # self._submit(order.ref)
-            # self.notify(order)
+            self._submit(order)
             return order
         except Exception as e:
             logger.error(e)

@@ -50,15 +50,15 @@ class BinanceStore(CCXTStore):
         self._loop_stream()
 
     ### low level functions
-    def parse_exchange_symbol(self, symbol):
+    def _parse_ws_symbol(self, symbol):
         return re.sub(r"[/_]", '', symbol)
 
-    def _parse_exchange_symbols(self, symbols):
+    def _parse_ws_symbols(self, symbols):
         if isinstance(symbols, str):
             return [symbols]
 
         if isinstance(symbols, list):
-            return [self.parse_exchange_symbol(m) for m in symbols]
+            return [self._parse_ws_symbol(m) for m in symbols]
         raise Exception(f'cannot parse symbols {symbols}')
 
     # subscribe
@@ -90,7 +90,7 @@ class BinanceStore(CCXTStore):
         for p in a['P']:
             positions.append(
                 dict(
-                    symbol=p["s"],  # Symbol
+                    symbol=self.exchange.safe_symbol(p["s"]),  # Symbol
                     amount=float(p["pa"]),  # Position Amount
                     price=float(p["ep"]),  # Entry Price
                     accum=float(p["cr"]),  # (Pre-fee) Accumulated Realized
@@ -121,7 +121,7 @@ class BinanceStore(CCXTStore):
                     order=dict(
                         id=o["i"],
                         clientOrderId=o["c"],
-                        symbol=o['s'],
+                        symbol=self.exchange.safe_symbol(o['s']),
                         time=o["T"],
                         side=o["S"],
                         type=o["o"],
@@ -153,7 +153,7 @@ class BinanceStore(CCXTStore):
 
     # bar
     def subscribe_bars(self, markets, interval, q=None, **kwargs):
-        markets = self._parse_exchange_symbols(markets)
+        markets = self._parse_ws_symbols(markets)
         channel = f"kline_{interval}"
         listeners = self._bar_listeners(markets, interval)
         return self.subscribe(channel, markets, listeners, q=q, **kwargs)
@@ -179,7 +179,7 @@ class BinanceStore(CCXTStore):
             bar=dict(
                 start=b["t"],  # Kline start time
                 end=b["T"],  # Kline close time
-                symbol=b["s"],  # Symbol
+                symbol=self.exchange.safe_symbol(b["s"]),  # Symbol
                 interval=b["i"],  # Interval
                 first_tradeid=b["f"],  # First trade ID
                 last_tradeid=b["L"],  # Last trade ID
@@ -203,7 +203,7 @@ class BinanceStore(CCXTStore):
 
     # ticker
     def subscribe_tickers(self, markets, **kwargs):
-        markets = self._parse_exchange_symbols(markets)
+        markets = self._parse_ws_symbols(markets)
         return self.subscribe('ticker', markets, ['24hrTicker'], **kwargs)
 
     def _parse_ticker(self, e):
@@ -212,7 +212,7 @@ class BinanceStore(CCXTStore):
         return dict(
             event=e['e'],
             event_time=e['E'],
-            symbol=e["s"],  # Symbol
+            symbol=self.exchange.safe_symbol(e["s"]),  # Symbol
             change=float(e["p"]),  # Price change
             change_percent=float(e["P"]),  # Price change percent
             avg_price=float(e["w"]),  # Weighted average price
@@ -232,7 +232,7 @@ class BinanceStore(CCXTStore):
 
     # mini ticker
     def subscribe_minitickers(self, markets, **kwargs):
-        markets = self._parse_exchange_symbols(markets)
+        markets = self._parse_ws_symbols(markets)
         return self.subscribe('miniTicker', markets, ['24hrMiniTicker'],
                               **kwargs)
 
@@ -242,7 +242,7 @@ class BinanceStore(CCXTStore):
         return dict(
             event=e['e'],
             event_time=e['E'],
-            symbol=e["s"],  # Symbol
+            symbol=self.exchange.safe_symbol(e["s"]),  # Symbol
             close=float(e["c"]),  # Close price
             open=float(e["o"]),  # Open price
             high=float(e["h"]),  # High price
@@ -253,7 +253,7 @@ class BinanceStore(CCXTStore):
 
     # book ticker
     def subscribe_bookticker(self, markets, **kwargs):
-        markets = self._parse_exchange_symbols(markets)
+        markets = self._parse_ws_symbols(markets)
         return self.subscribe('bookTicker', markets, ['bookTicker'], **kwargs)
 
     def _parse_bookticker(self, e):
@@ -264,7 +264,7 @@ class BinanceStore(CCXTStore):
             event_time=e['E'],
             transaction_time=e['T'],
             update_id=e["u"],
-            symbol=e["s"],
+            symbol=self.exchange.safe_symbol(e["s"]),
             bid=float(e["b"]),
             bid_qty=float(e["B"]),
             ask=float(e["a"]),
@@ -324,7 +324,7 @@ class BinanceStore(CCXTStore):
         else:
             if type(markets) == str:
                 markets = [markets]
-            markets = self._parse_exchange_symbols(markets)
+            markets = self._parse_ws_symbols(markets)
 
             self._rate_limit()
             ok = self.ws.unsubscribe_from_stream(stream_id, channels, markets,
