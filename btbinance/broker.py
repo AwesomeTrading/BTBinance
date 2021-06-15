@@ -363,7 +363,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         elif status == Order.Rejected:
             self._reject(order)
         elif status == Order.Expired:
-            self._expire(order)
+            # self._expire(order)
+            logger.info(
+                "Binance order %s expired just for execute stop market", oref)
         else:
             raise Exception(f"Status {status} is invalid: {raw}")
 
@@ -406,8 +408,11 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._bracketize(order, cancel=True)
         self._ococheck(order)
 
-    def _expire(self, order):
-        order.expire()
+    def _expire(self, order: Order):
+        # order.expire()
+        # todo: quick fix while cannot set order status by function
+        order.status = Order.Expired
+
         self.notify(order)
         self._bracketize(order, cancel=True)
         self._ococheck(order)
@@ -524,9 +529,10 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 if o.alive():
                     self._cancel(o)
 
-    def _ococheck(self, order):
+    def _ococheck(self, order: Order):
         if order.alive():
             raise Exception("Should not be called here")
+
         ocoref = self._ocos.pop(order.ref, order.ref)  # a parent or self
         ocol = self._ocol.pop(ocoref, None)
         if ocol:
@@ -705,9 +711,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         id = order.info.get('id', None)
         if not id:
             raise Exception(f'Order doesnot have id {order}')
-        params = dict(orderId=id)
 
-        return self.store.cancel_my_order(order.data._name, params)
+        return self.store.cancel_my_order(id, order.data._name)
 
     # def private_end_point(self, type, endpoint, params):
     #     '''
