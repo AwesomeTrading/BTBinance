@@ -126,7 +126,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     params = dict(rebuild=True)
 
-    def __init__(self, broker_mapping=None, debug=False, **kwargs):
+    def __init__(self, broker_mapping=None, **kwargs):
         super(BinanceBroker, self).__init__()
 
         if broker_mapping is not None:
@@ -140,15 +140,11 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 pass
 
         self.store = BinanceStore(**kwargs)
-        self.datas = dict()
-
+        self.expires = collections.defaultdict(list)
         self.currency = self.store.currency
-        self.debug = debug
-        self.indent = 4  # For pretty printing dictionaries
 
         self.positions = collections.defaultdict(Position)
         self.orders = collections.OrderedDict()  # orders by order id
-        # self.open_orders = list()
         self.opending_orders = collections.defaultdict(
             list)  # pending transmission
         self.brackets = dict()  # confirmed brackets
@@ -176,14 +172,10 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return cash, value
 
     def getcash(self):
-        # Get cash seems to always be called before get value
-        # Therefore it makes sense to add getbalance here.
-        # return self.store.getcash(self.currency)
         self.cash = self.store._cash
         return self.cash
 
     def getvalue(self, datas=None):
-        # return self.store.getvalue(self.currency)
         self.value = self.store._value
         return self.value
 
@@ -211,18 +203,38 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._rebuild_orders()
             self.p.rebuild = False
 
+    def next(self):
+        data = self.cerebro.datas[0]
+        self._check_expire(data.datetime[0])
+
+    ### expired
+    def _add_expire(self, order):
+        if not order.valid:
+            return
+        self.expires[order.valid].append(order)
+
+    def _check_expire(self, at):
+        if len(self.expires) == 0:
+            return
+
+        # buypass key lock when delete while in loop
+        expireds = []
+        for k in self.expires.keys():
+            if k <= at:
+                expireds.append(k)
+
+        for k in expireds:
+            for o in self.expires[k]:
+                self._expire(o)
+                self.cancel(o)
+            del self.expires[k]
+
     ### data
     def _get_data(self, name):
-        return self.datas.get(name, None)
-
-    def data_started(self, data):
-        if data._name in self.datas:
-            raise Exception("Data is duplicated")
-        self.datas[data._name] = data
+        return self.cerebro.datasbyname.get(name, None)
 
     ### account
     def _loop_account(self):
-        # listen for account changes
         q, stream_id = self.store.subscribe_my_account()
         t = threading.Thread(target=self._t_loop_account,
                              args=(
@@ -257,23 +269,17 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### position
     def getposition(self, data, clone=True):
-        # return self.store.getposition(data._dataname, clone=clone)
         pos = self.positions[data._dataname]
         if clone:
             pos = pos.clone()
         return pos
 
     def _rebuild_positions(self):
-        symbols = [d._name for d in self.datas.values()]
+        symbols = self.cerebro.datasbyname.keys()
         positions = self.store.fetch_my_positions(symbols)
         self._on_positions(positions)
 
     def _on_positions(self, raws):
-        # '''Only run on first time load positions'''
-        # if getattr(self, '_position_inited', None):
-        #     return
-        # self._position_inited = True
-
         for raw in raws:
             symbol = raw['symbol']
             price = float(_val(raw, ['price', 'entryPrice']))
@@ -283,7 +289,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### order
     def orderstatus(self, order):
-        # o = self.orders[order.ref]
         return order.status
 
     # order update
@@ -309,7 +314,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return info
 
     def _rebuild_orders(self):
-        # symbols = [d._name for d in self.datas]
         raws = self.store.fetch_my_open_orders()
         for raw in raws:
             self._on_order(raw)
@@ -400,6 +404,10 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 self._accept(o)
 
     def _cancel(self, order):
+        # bypass for local expire and server cancel
+        if order.status == Order.Expired:
+            return
+
         if order.status == Order.Canceled:
             return
 
@@ -613,6 +621,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         order.addinfo(**kwargs)
         # order.addcomminfo(self.getcommissioninfo(data))
         self._ocoize(order)
+        self._add_expire(order)
         return self._transmit(order)
 
     def sell(self,
@@ -650,6 +659,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         order.addinfo(**kwargs)
         # order.addcomminfo(self.getcommissioninfo(data))
         self._ocoize(order)
+        self._add_expire(order)
         return self._transmit(order)
 
     def _create_bracket(self, order, stopside, takeside):
