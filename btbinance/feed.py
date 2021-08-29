@@ -42,24 +42,25 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         will be fetched in a single request.
     """
 
+    _StoreCls = BinanceStore
+
     params = dict(
         historical=False,
         backfill=True,
         tick=False,
         adjstarttime=False,
     )
-
-    _store = BinanceStore
+    store: BinanceStore = None
 
     # States for the Finite State Machine in _load
     _ST_LIVE, _ST_HISTORBACK, _ST_OVER = range(3)
 
     def __init__(self, **kwargs):
-        self.store = self._store(**kwargs)
-        self._data = queue.Queue()
+        self.store = self._StoreCls(**kwargs)
+        self._q = queue.Queue()
 
     def haslivedata(self):
-        return self._state == self._ST_LIVE and self._data
+        return self._state == self._ST_LIVE and self._q
 
     def islive(self):
         return not self.p.historical
@@ -70,55 +71,47 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         # Kickstart store and get queue to wait on
         self.store.start(data=self)
 
-        timeframe = self.store.get_exchange_timeframe(self._timeframe,
-                                                      self._compression)
-
         self.put_notification(self.DELAYED)
 
         if self.p.fromdate:
             self._state = self._ST_HISTORBACK
-            self._history_bars(
-                self.p.dataname,
-                timeframe,
-                self.p.fromdate,
-                self._data,
-            )
+            self._history_bars(self._q)
 
-        self._data.put("LIVE")
+        self._q.put("LIVE")
         self._state = self._ST_LIVE
 
         if self.p.tick:
             self.store.subscribe_bars(
                 [self.p.dataname],
-                timeframe,
-                self._data,
+                self._timeframe,
+                self._compression,
+                self._q,
             )
         else:
             self._bars_stream(
                 [self.p.dataname],
-                timeframe,
-                self._data,
+                self._timeframe,
+                self._compression,
+                self._q,
             )
 
-    def _bars_stream(self, dataname, timeframe, q):
+    def _bars_stream(self, dataname, timeframe, compression, q):
         t = threading.Thread(target=self._t_thread_bars_stream,
                              args=(
                                  dataname,
                                  timeframe,
+                                 compression,
                                  q,
                              ),
                              daemon=True)
         t.start()
 
-    def _t_thread_bars_stream(self, dataname, timeframe, q):
+    def _t_thread_bars_stream(self, dataname, timeframe, compression, q):
         waitrandom = random.randint(5, 15)
         while True:
             # wait for next bar
             dtnow = datetime.utcnow()
-            dtnext = bar_starttime(self._timeframe,
-                                   self._compression,
-                                   dt=dtnow,
-                                   offset=-1)
+            dtnext = bar_starttime(timeframe, compression, dt=dtnow, offset=-1)
             dtdiff = dtnext - dtnow
             waittime = (dtdiff.days * 24 * 60 * 60) + dtdiff.seconds
 
@@ -132,6 +125,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             tmp_q, stream_id = self.store.subscribe_bars(
                 dataname,
                 timeframe,
+                compression,
             )
             self._get_closed_bar(tmp_q, q, stream_id)
 
@@ -156,13 +150,14 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 out_q.put(bar)
                 return self.store.unsubscribe(stream_id)
 
-    def _history_bars(self, dataname, timeframe, fromdate, q, limit=1500):
+    def _history_bars(self, q, limit=1500):
         bars = []
-        begindate = fromdate.timestamp()
+        begindate = self.p.fromdate.timestamp()
         while True:
             raws = self.store.fetch_ohlcv(
-                dataname,
-                timeframe,
+                symbol=self.p.dataname,
+                timeframe=self._timeframe,
+                compression=self._compression,
                 since=begindate,
                 limit=limit,
             )
@@ -193,7 +188,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         while True:
             if self._state == self._ST_LIVE:
                 try:
-                    msg = self._data.get(timeout=self._qcheck)
+                    msg = self._q.get(timeout=self._qcheck)
                 except queue.Empty:
                     time.sleep(0.1)
                     return None
@@ -231,7 +226,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             # move time to start time of next bar
             # and subtract 0.1 miliseconds (ensures no
             # rounding issues, 10 microseconds is minimum)
-            dtobj = bar_starttime(self.p.timeframe, self.p.compression, dtobj,
+            dtobj = bar_starttime(self._timeframe, self._compression, dtobj,
                                   -1) - timedelta(microseconds=100)
         dt = date2num(dtobj, tz=self.p.tz)
         dt1 = self.lines.datetime[-1]

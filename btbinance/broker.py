@@ -8,6 +8,7 @@ import itertools
 import threading
 import time
 import logging
+import traceback
 from typing import Final
 
 from backtrader import BrokerBase, Order, BuyOrder, SellOrder
@@ -125,6 +126,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     }
 
     params = dict(rebuild=True)
+    store: BinanceStore = None
 
     def __init__(self, broker_mapping=None, **kwargs):
         super(BinanceBroker, self).__init__()
@@ -152,8 +154,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._ocol = collections.defaultdict(list)
         self.notifies = queue.Queue()  # holds orders which are notified
 
-        self.startingcash = self.store._cash
-        self.startingvalue = self.store._value
+        self.cash, self.value = self.get_wallet_balance(self.currency)
+        self.startingcash = self.cash
+        self.startingvalue = self.value
 
     def start(self):
         super().start()
@@ -161,8 +164,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._loop_account()
 
     def get_balance(self):
-        self.cash = self.store._cash
-        self.value = self.store._value
         return self.cash, self.value
 
     def get_wallet_balance(self, currency, params={}):
@@ -172,11 +173,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return cash, value
 
     def getcash(self):
-        self.cash = self.store._cash
         return self.cash
 
     def getvalue(self, datas=None):
-        self.value = self.store._value
         return self.value
 
     def get_notification(self):
@@ -218,15 +217,12 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             return
 
         # buypass key lock when delete while in loop
-        expireds = []
-        for k in self.expires.keys():
-            if k <= at:
-                expireds.append(k)
-
-        for k in expireds:
+        expired = [k for k in self.expires.keys() if k <= at]
+        for k in expired:
             for o in self.expires[k]:
-                self._expire(o)
-                self.cancel(o)
+                if o.alive():
+                    self._expire(o)
+                    self.cancel(o)
             del self.expires[k]
 
     ### data
@@ -281,9 +277,13 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _on_positions(self, raws):
         for raw in raws:
+            price = _val(raw, ['price', 'entryPrice'])
+            price = 0 if price is None else float(price)
+
+            size = _val(raw, ['amount', 'info.positionAmt'])
+            size = 0 if size is None else float(size)
+
             symbol = raw['symbol']
-            price = float(_val(raw, ['price', 'entryPrice']))
-            size = float(_val(raw, ['amount', 'positionAmt']))
             pos = self.positions[symbol]
             pos.set(size, price)
 
@@ -292,24 +292,47 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return order.status
 
     # order update
+    def _build_order_info(self, order: Order):
+        info = f"bt:r_{order.ref}"
+        if order.parent:
+            info += f":p_{order.parent.ref}"
+        if order.valid:
+            info += f":exp_{order.valid}"
+        if order.info.get('sl', False):
+            info += f":sl"
+
+        return info
+
     def _parse_order_info(self, raw):
         '''
-        raw: bt:r_2:p_1
+        raw: bt:r_2:p_1:exp_123123.1232:sl
         '''
         info = dict(id=raw)
         if raw and raw.startswith("bt:"):
-            splited = raw.split('bt:', 1)[1].split("_")
-            zipped = dict(zip(splited[::2], splited[1::2]))
+            splited = raw.split('bt:', 1)[1].split(':')
+            pairs = dict()
+            for s in splited:
+                if '_' in s:
+                    k, v = s.split('_', 1)
+                    pairs[k] = v
+                else:
+                    pairs[s] = True
 
             # ref
-            ref = zipped.get('r', None)
-            if ref:
-                info['ref'] = int(ref)
+            ref = pairs.get('r', None)
+            if ref: info['ref'] = int(ref)
 
             # parent ref
-            pref = zipped.get('p', None)
-            if pref:
-                info['pref'] = int(pref)
+            pref = pairs.get('p', None)
+            if pref: info['pref'] = int(pref)
+
+            # expire time
+            expire = pairs.get('exp', None)
+            if expire: info['expire'] = float(expire)
+
+            # stoploss
+            sl = pairs.get('sl', None)
+            if sl: info['sl'] = True
 
         return info
 
@@ -345,14 +368,22 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if oref not in self.orders:
             Order.refbasis = itertools.count(oref)
             data = self._get_data(symbol)
-            oobject = BuyOrder if size > 0 else SellOrder
-            order = oobject(
+            OrderObject = BuyOrder if size > 0 else SellOrder
+            order = OrderObject(
                 data=data,
                 size=size,
                 price=price,
                 exectype=Order.Limit,
                 simulated=True,
+                valid=info.get('expire', None),
             )
+            order.addinfo(
+                id=raw['id'],
+                sl=info.get('sl', None),
+            )
+            self._ocoize(order)
+            self._add_expire(order)
+            self.orders[oref] = order
         else:
             order = self.orders[oref]
 
@@ -617,12 +648,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             parent=parent,
             transmit=transmit,
         )
-
-        order.addinfo(**kwargs)
-        # order.addcomminfo(self.getcommissioninfo(data))
-        self._ocoize(order)
-        self._add_expire(order)
-        return self._transmit(order)
+        return self._placing_order(order, **kwargs)
 
     def sell(self,
              owner,
@@ -655,7 +681,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             parent=parent,
             transmit=transmit,
         )
+        return self._placing_order(order, **kwargs)
 
+    def _placing_order(self, order: Order, **kwargs):
         order.addinfo(**kwargs)
         # order.addcomminfo(self.getcommissioninfo(data))
         self._ocoize(order)
@@ -670,17 +698,11 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def _create(self, order: Order):
         # param
         params = dict()
-        if order.parent:
+        if order.parent or order.info.get('sl', False):
             params['closePosition'] = True
 
-        # if order.valid:
-        #     params['timeInForce'] = order.valid
-
         # order ref
-        client_id = f"bt:r_{order.ref}"
-        if order.parent:
-            client_id += f":p_{order.parent.ref}"
-        params['newClientOrderId'] = client_id
+        params['newClientOrderId'] = self._build_order_info(order)
 
         # order type
         order_type = order_types.get(order.exectype)
@@ -701,7 +723,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         amount = abs(order.size)
         try:
             o = self.store.create_my_order(symbol=order.data._name,
-                                           order_type=order_type,
+                                           type=order_type,
                                            side=side,
                                            amount=amount,
                                            price=order.price,
@@ -710,7 +732,11 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._submit(order)
             return order
         except Exception as e:
+            traceback.print_stack()
             logger.error(e)
+
+    def modify(self, old, new):
+        raise RuntimeError(f"MODIFY ORDER {old} {new}")
 
     def cancel(self, order: Order):
         if not self.orders.get(order.ref, False):
@@ -723,29 +749,3 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             raise Exception(f'Order doesnot have id {order}')
 
         return self.store.cancel_my_order(id, order.data._name)
-
-    # def private_end_point(self, type, endpoint, params):
-    #     '''
-    #     Open method to allow calls to be made to any private end point.
-    #     See here: https://github.com/ccxt/ccxt/wiki/Manual#implicit-api-methods
-
-    #     - type: String, 'Get', 'Post','Put' or 'Delete'.
-    #     - endpoint = String containing the endpoint address eg. 'order/{id}/cancel'
-    #     - Params: Dict: An implicit method takes a dictionary of parameters, sends
-    #       the request to the exchange and returns an exchange-specific JSON
-    #       result from the API as is, unparsed.
-
-    #     To get a list of all available methods with an exchange instance,
-    #     including implicit methods and unified methods you can simply do the
-    #     following:
-
-    #     print(dir(ccxt.hitbtc()))
-    #     '''
-    #     endpoint_str = endpoint.replace('/', '_')
-    #     endpoint_str = endpoint_str.replace('{', '')
-    #     endpoint_str = endpoint_str.replace('}', '')
-
-    #     method_str = 'private_' + type.lower() + endpoint_str.lower()
-    #     return self.store.private_end_point(type=type,
-    #                                         endpoint=method_str,
-    #                                         params=params)

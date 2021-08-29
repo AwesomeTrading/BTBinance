@@ -3,4 +3,4 @@ ccxt
 numpy
 python-binance
 unicorn-binance-websocket-api
-btccxt @ git+ssh://git@github.com/AwesomeTrading/BTCCXT.git@master
+pybinance @ git+ssh://git@github.com/AwesomeTrading/PyBinance.git@main
