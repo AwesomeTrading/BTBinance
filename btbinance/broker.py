@@ -342,10 +342,15 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._on_order(raw)
 
     def _on_order(self, raw):
+        logger.info(f'RAW ORDER: {raw}')
+
         status = order_statuses_reversed[raw['status'].lower()]
         symbol = raw['symbol']
         price = raw['price']
         size = raw['amount']
+
+        if status == Order.Partial:
+            print('debug')
 
         if status in [Order.Partial, Order.Completed]:
             size = raw['filled']
@@ -359,12 +364,25 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         info = self._parse_order_info(client_id)
 
         oref = info.get('ref', None)
+        # find order ref by order id, order existed but it is external order, so it doesn't have info
+        if not oref:
+            for o in self.orders.values():
+                if o.info.get('id', None) == raw['id']:
+                    oref = o.ref
+                    break
+
+        # order still didn't exist before
         if not oref:
             logger.warn(f"External order: {raw}")
             if status in [Order.Partial, Order.Completed]:
-                self._fill_external(symbol, size, price)
+                profit = raw['profit']
+                commission = raw['comm']
+                if commission is None: commission = 0
+                if type(commission) == str: commission = float(commission)
+                self._fill_external(symbol, size, price, profit, commission)
             return
 
+        # order ref not None, but didn't exist before
         if oref not in self.orders:
             Order.refbasis = itertools.count(oref)
             data = self._get_data(symbol)
@@ -387,6 +405,21 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         else:
             order = self.orders[oref]
 
+        # skip for local expire and server cancel
+        if order.info.get('expired', False) and status == Order.Canceled:
+            return
+        # skip for order local modified and server cancel
+        if order.info.get('modified', False) and status == Order.Canceled:
+            return
+        if order.info.get('modifiednew', False) and \
+            status in [Order.Submitted, Order.Accepted]:
+            del order.info['modifiednew']
+            return
+        # skip for local stop market and server expire then complete
+        if order.info.get('stopmarket', False) and status == Order.Accepted:
+            return
+
+        # execute and notify order
         if status == Order.Submitted:
             self._submit(order)
         elif status == Order.Accepted:
@@ -394,13 +427,22 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         elif status == Order.Canceled:
             self._cancel(order)
         elif status in [Order.Partial, Order.Completed]:
-            self._fill(order, size, price, filled=status == Order.Completed)
+            filled = status == Order.Completed
+            profit = raw['profit']
+            commission = raw['comm']
+            if commission is None: commission = 0
+            if type(commission) == str: commission = float(commission)
+            self._fill(order,
+                       size,
+                       price,
+                       filled=filled,
+                       profit=profit,
+                       commission=commission)
         elif status == Order.Rejected:
             self._reject(order)
         elif status == Order.Expired:
-            # self._expire(order)
-            logger.info(
-                "Binance order %s expired just for execute stop market", oref)
+            # order expired just for execute stop market
+            order.addinfo(stopmarket=True)
         else:
             raise Exception(f"Status {status} is invalid: {raw}")
 
@@ -435,10 +477,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 self._accept(o)
 
     def _cancel(self, order):
-        # bypass for local expire and server cancel
-        if order.status == Order.Expired:
-            return
-
         if order.status == Order.Canceled:
             return
 
@@ -451,16 +489,24 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         # order.expire()
         # todo: quick fix while cannot set order status by function
         order.status = Order.Expired
+        order.addinfo(expired=True)
 
         self.notify(order)
         self._bracketize(order, cancel=True)
         self._ococheck(order)
 
-    def _fill(self, order: Order, size, price, filled=False, **kwargs):
+    def _fill(self,
+              order: Order,
+              size,
+              price,
+              filled=False,
+              profit=0,
+              commission=0,
+              **kwargs):
         if size == 0 and not filled:
             return
-        logger.debug("Fill order: {}, {}, {}, {}".format(
-            order.ref, size, price, filled))
+        logger.debug("Fill order: {}, {}, {}, {}, {}, {}".format(
+            order.ref, size, price, filled, profit, commission))
 
         if not order.alive():  # can be a bracket
             pref = getattr(order.parent, "ref", order.ref)
@@ -497,7 +543,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         psize, pprice, opened, closed = pos.size, pos.price, pos.size, pos.size - size
         # comminfo = self.getcommissioninfo(data)
 
-        closedvalue = closedcomm = 0.0
+        closedvalue = profit
+        closedcomm = commission
         openedvalue = openedcomm = 0.0
         margin = pnl = 0.0
 
@@ -515,9 +562,9 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._bracketize(order)
             self._ococheck(order)
 
-    def _fill_external(self, symbol, size, price):
-        logger.debug("Fill external order: {}, {}, {}".format(
-            symbol, size, price))
+    def _fill_external(self, symbol, size, price, profit, commission):
+        logger.debug("Fill external order: {}, {}, {}, {}, {}".format(
+            symbol, size, price, profit, commission))
         if size == 0:
             return
 
@@ -538,8 +585,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         )
 
         order.addcomminfo(self.getcommissioninfo(data))
-        order.execute(0, size, price, 0, 0.0, 0.0, size, 0.0, 0.0, 0.0, 0.0,
-                      size, price)
+        order.execute(0, size, price, 0, profit, commission, size, 0.0, 0.0,
+                      0.0, 0.0, size, price)
         order.completed()
 
         self.notify(order)
@@ -735,8 +782,29 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             traceback.print_stack()
             logger.error(e)
 
-    def modify(self, old, new):
-        raise RuntimeError(f"MODIFY ORDER {old} {new}")
+    def modify(self, old: Order, new: Order):
+        old.addinfo(modified=True)
+        new.addinfo(modifiednew=True)
+        logger.info(f"MODIFY ORDER:{old.ref} {new.ref}")
+
+        self.cancel(old)
+        OrderFunc = self.buy if new.isbuy() else self.sell
+        return OrderFunc(
+            owner=new.owner,
+            data=new.data,
+            size=new.size,
+            price=new.price,
+            plimit=new.pricelimit,
+            exectype=new.exectype,
+            valid=new.valid,
+            tradeid=new.tradeid,
+            oco=new.oco,
+            trailamount=new.trailamount,
+            trailpercent=new.trailpercent,
+            parent=new.parent,
+            transmit=new.transmit,
+            **new.info,
+        )
 
     def cancel(self, order: Order):
         if not self.orders.get(order.ref, False):
