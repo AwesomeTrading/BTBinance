@@ -8,5 +8,9 @@ setup(
     author='Santatic',
     license='Private',
     packages=['btbinance'],
-    install_requires=['backtrader', 'unicorn_binance_websocket_api'],
+    install_requires=[
+        'backtrader',
+        'unicorn_binance_websocket_api',
+        'https://github.com/AwesomeTrading/PyBinance/tarball/main#egg=pybinance',
+    ],
 )

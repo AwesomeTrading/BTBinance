@@ -342,7 +342,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._on_order(raw)
 
     def _on_order(self, raw):
-        logger.info(f'RAW ORDER: {raw}')
+        logger.info(f'Raw order: {raw}')
 
         status = order_statuses_reversed[raw['status'].lower()]
         symbol = raw['symbol']
