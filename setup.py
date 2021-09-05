@@ -11,6 +11,6 @@ setup(
     install_requires=[
         'backtrader',
         'unicorn_binance_websocket_api',
-        'git+ssh://git@github.com/AwesomeTrading/PyBinance.git#egg=pybinance-1.0',
+        'git+ssh://git@github.com/AwesomeTrading/PyBinance.git@main',
     ],
 )
