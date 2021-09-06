@@ -386,6 +386,10 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if oref not in self.orders:
             Order.refbasis = itertools.count(oref)
             data = self._get_data(symbol)
+            if not data:
+                logger.warning(f"No data for symbol {symbol}")
+                return
+
             OrderObject = BuyOrder if size > 0 else SellOrder
             order = OrderObject(
                 data=data,
@@ -570,6 +574,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         data = self._get_data(symbol)
         if data is None:
+            logger.warning(f"No data for symbol {symbol}")
             return
 
         # pos = self.getposition(data, clone=False)
