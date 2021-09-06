@@ -815,5 +815,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         id = order.info.get('id', None)
         if not id:
             raise Exception(f'Order doesnot have id {order}')
-
-        return self.store.cancel_my_order(id, order.data._name)
+        try:
+            return self.store.cancel_my_order(id, order.data._name)
+        except Exception as e:
+            logger.error(e)
+            traceback.print_stack()
