@@ -349,9 +349,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         price = raw['price']
         size = raw['amount']
 
-        if status == Order.Partial:
-            print('debug')
-
         if status in [Order.Partial, Order.Completed]:
             size = raw['filled']
             price = raw['average']
