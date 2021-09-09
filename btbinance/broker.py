@@ -770,19 +770,15 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # amount
         amount = abs(order.size)
-        try:
-            o = self.store.create_my_order(symbol=order.data._name,
-                                           type=order_type,
-                                           side=side,
-                                           amount=amount,
-                                           price=order.price,
-                                           params=params)
-            order.addinfo(id=o['id'])
-            self._submit(order)
-            return order
-        except Exception as e:
-            traceback.print_stack()
-            logger.error(e)
+        o = self.store.create_my_order(symbol=order.data._name,
+                                       type=order_type,
+                                       side=side,
+                                       amount=amount,
+                                       price=order.price,
+                                       params=params)
+        order.addinfo(id=o['id'])
+        self._submit(order)
+        return order
 
     def modify(self, old: Order, new: Order):
         old.addinfo(modified=True)
