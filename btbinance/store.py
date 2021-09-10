@@ -10,7 +10,6 @@ import backtrader as bt
 
 from backtrader.metabase import MetaParams
 from backtrader.utils.py3 import with_metaclass
-from pybinance import PyBinance
 from pybinance.api import PyBinanceWS
 
 logger = logging.getLogger('BTBinanceStore')
