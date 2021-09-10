@@ -277,6 +277,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _on_positions(self, raws):
         for raw in raws:
+            logger.info(f'Raw position: {raw}')
+
             price = _val(raw, ['price', 'entryPrice'])
             price = 0 if price is None else float(price)
 
