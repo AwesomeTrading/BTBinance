@@ -370,7 +370,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # order still didn't exist before
         if not oref:
-            logger.warn(f"External order: {raw}")
+            logger.warn(f"External order {symbol} id={raw['id']}")
             if status in [Order.Partial, Order.Completed]:
                 profit = raw['profit']
                 commission = raw['comm']
