@@ -572,7 +572,7 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             return
 
         data = self._get_data(symbol)
-        if data is None:
+        if not data:
             logger.warning(f"No data for symbol {symbol}")
             return
 
