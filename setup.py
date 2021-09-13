@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     name='btbinance',
@@ -7,7 +7,7 @@ setup(
     url='https://github.com/AwesomeTrading/BTBinance.git',
     author='Santatic',
     license='Private',
-    packages=['btbinance', 'btbinance.*'],
+    packages=find_packages(include=['btbinance', 'btbinance.*']),
     install_requires=[
         'backtrader',
         'unicorn_binance_websocket_api',
