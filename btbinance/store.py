@@ -138,11 +138,9 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
     ### WS
     def subscribe_bars(self, markets, timeframe, compression, **kwargs):
         tf = self._get_exchange_timeframe(timeframe, compression)
-        return self.exchange.subscribe_bars(
-            markets=markets,
-            timeframe=tf,
-            **kwargs,
-        )
+        return self.exchange.subscribe_bars(markets=markets,
+                                            timeframe=tf,
+                                            **kwargs)
 
     def subscribe_my_account(self, **kwargs):
         return self.exchange.subscribe_my_account(**kwargs)
