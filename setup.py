@@ -7,7 +7,7 @@ setup(
     url='https://github.com/AwesomeTrading/BTBinance.git',
     author='Santatic',
     license='Private',
-    packages=['btbinance'],
+    packages=['btbinance', 'btbinance.broker'],
     install_requires=[
         'backtrader',
         'unicorn_binance_websocket_api',
