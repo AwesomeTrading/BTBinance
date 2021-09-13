@@ -6,6 +6,7 @@ import threading
 import time
 import logging
 import random
+import math
 from datetime import datetime, timedelta
 
 from backtrader.feed import DataBase
@@ -15,12 +16,11 @@ from backtrader import date2num
 from .store import BinanceStore
 from .utils import bar_starttime
 
-logger = logging.getLogger('BTBinanceFeed')
+logger = logging.getLogger('BinanceFeed')
 
 
 class MetaBinanceFeed(DataBase.__class__):
     def __init__(cls, name, bases, dct):
-        '''Class has already been created ... register'''
         # Initialize the class
         super(MetaBinanceFeed, cls).__init__(name, bases, dct)
 
@@ -152,7 +152,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def _history_bars(self, q, limit=1500):
         bars = []
-        begindate = self.p.fromdate.timestamp()
+        begindate = math.floor(self.p.fromdate.timestamp() * 1000)
         while True:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,

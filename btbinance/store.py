@@ -12,11 +12,10 @@ from backtrader.metabase import MetaParams
 from backtrader.utils.py3 import with_metaclass
 from pybinance.api import PyBinanceWS
 
-logger = logging.getLogger('BTBinanceStore')
+logger = logging.getLogger('BinanceStore')
 
 
 class MetaSingleton(MetaParams):
-    '''Metaclass to make a metaclassed class a singleton'''
     def __init__(cls, name, bases, dct):
         super(MetaSingleton, cls).__init__(name, bases, dct)
         cls._singleton = None
@@ -55,7 +54,6 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
     }
     _TIMEFRAME_E2L = {v: k for k, v in _TIMEFRAME_L2E.items()}
 
-    BrokerCls = None  # broker class will auto register
     DataCls = None  # data class will auto register
 
     def __init__(self, currency, config, **kwargs):
@@ -67,10 +65,6 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
     @classmethod
     def getdata(cls, *args, **kwargs):
         return cls.DataCls(*args, **kwargs)
-
-    @classmethod
-    def getbroker(cls, *args, **kwargs):
-        return cls.BrokerCls(*args, **kwargs)
 
     def start(self, data=None, broker=None):
         # Datas require some processing to kickstart data reception
@@ -89,6 +83,7 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
             self.broker = broker
         #     self.broker_threads()
         #     self.streaming_events()
+
     def live(self):
         self.broker.live()
 
@@ -116,14 +111,6 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
                              (ex.name, tf))
 
         return tf
-
-    # def _get_local_timeframe(self, timeframe):
-    #     tf, comp = self._TIMEFRAME_E2L.get(timeframe)
-    #     if tf is None:
-    #         raise ValueError(
-    #             "backtrader CCXT module doesn't support timeframe %s" %
-    #             timeframe)
-    #     return tf
 
     ### API
     def get_my_balance(self):

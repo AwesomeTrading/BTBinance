@@ -8,17 +8,15 @@ import itertools
 import threading
 import time
 import logging
-import traceback
 from typing import Final
 
-from backtrader import BrokerBase, Order, BuyOrder, SellOrder
-from backtrader.position import Position
+from backtrader import BrokerBase, Order, BuyOrder, SellOrder, Position
 from backtrader.utils.py3 import queue, with_metaclass
 
-from .store import BinanceStore
-from .utils import _val
+from ..store import BinanceStore
+from ..utils import _val
 
-logger = logging.getLogger('BinanceBroker')
+logger = logging.getLogger('BinanceFutureBroker')
 
 # LIMIT', 'MARKET', 'STOP', 'STOP_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_MARKET', 'TRAILING_STOP_MARKET
 order_types: Final = {
@@ -27,11 +25,6 @@ order_types: Final = {
     Order.Stop: 'stop_market',
     Order.StopLimit: 'stop',
 }
-order_types_reversed: Final = {v: k for k, v in order_types.items()}
-order_types_reversed.update({
-    'take_profit': Order.Limit,
-    'take_profit_market': Order.Limit,
-})
 
 order_statuses: Final = {
     Order.Created: 'open',
@@ -60,10 +53,9 @@ class MetaBinanceBroker(BrokerBase.__class__):
         '''Class has already been created ... register'''
         # Initialize the class
         super(MetaBinanceBroker, cls).__init__(name, bases, dct)
-        BinanceStore.BrokerCls = cls
 
 
-class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
+class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     '''Broker implementation for Binance cryptocurrency trading library.
     This class maps the orders/positions from Binance to the
     internal API of ``backtrader``.
@@ -128,32 +120,22 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     params = dict(rebuild=True)
     store: BinanceStore = None
 
-    def __init__(self, broker_mapping=None, **kwargs):
-        super(BinanceBroker, self).__init__()
-
-        if broker_mapping is not None:
-            try:
-                self.order_types = broker_mapping['order_types']
-            except KeyError:  # Might not want to change the order types
-                pass
-            try:
-                self.mappings = broker_mapping['mappings']
-            except KeyError:  # might not want to change the mappings
-                pass
+    def __init__(self, **kwargs):
+        super().__init__()
 
         self.store = BinanceStore(**kwargs)
         self.expires = collections.defaultdict(list)
         self.currency = self.store.currency
 
         self.positions = collections.defaultdict(Position)
-        self.orders = collections.OrderedDict()  # orders by order id
-        self.opending_orders = collections.defaultdict(
-            list)  # pending transmission
-        self.brackets = dict()  # confirmed brackets
+        self.orders = collections.OrderedDict()
+        self.opending_orders = collections.defaultdict(list)
+        self.brackets = dict()
         self._ocos = dict()
         self._ocol = collections.defaultdict(list)
-        self.notifies = queue.Queue()  # holds orders which are notified
+        self.notifies = queue.Queue()
 
+        # balance
         self.cash, self.value = self.get_wallet_balance(self.currency)
         self.startingcash = self.cash
         self.startingvalue = self.value
@@ -163,14 +145,14 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.store.start(broker=self)
         self._loop_account()
 
-    def get_balance(self):
-        return self.cash, self.value
-
     def get_wallet_balance(self, currency, params={}):
         balance = self.store.get_wallet_balance(currency, params=params)
         cash = balance['free'][currency] if balance['free'][currency] else 0
         value = balance['total'][currency] if balance['total'][currency] else 0
         return cash, value
+
+    def get_balance(self):
+        return self.cash, self.value
 
     def getcash(self):
         return self.cash
@@ -194,9 +176,6 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self.p.rebuild = False
 
     def rebuild_environement(self):
-        """
-        Rebuild positions and orders when restart strategy
-        """
         if self.p.rebuild:
             self._rebuild_positions()
             self._rebuild_orders()
@@ -302,6 +281,8 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             info += f":exp_{order.valid}"
         if order.info.get('sl', False):
             info += f":sl"
+        if order.info.get('tp', False):
+            info += f":tp"
 
         return info
 
@@ -335,6 +316,10 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             # stoploss
             sl = pairs.get('sl', None)
             if sl: info['sl'] = True
+
+            # takeprofit
+            tp = pairs.get('tp', None)
+            if tp: info['tp'] = True
 
         return info
 
@@ -508,15 +493,16 @@ class BinanceBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
               **kwargs):
         if size == 0 and not filled:
             return
-        logger.debug("Fill order: {}, {}, {}, {}, {}, {}".format(
-            order.ref, size, price, filled, profit, commission))
+        logger.debug("Fill order: %d, %f, %f, %f, %f, %f",
+                     (order.ref, size, price, filled, profit, commission))
 
         if not order.alive():  # can be a bracket
             pref = getattr(order.parent, "ref", order.ref)
             if pref not in self.brackets:
-                msg = ("Order fill received for {}, with price {} and size {} "
-                       "but order is no longer alive and is not a bracket. "
-                       "Unknown situation").format(order.ref, price, size)
+                msg = (
+                    f"Order fill received for {order.ref}, with price {price} and size {size} "
+                    "but order is no longer alive and is not a bracket. "
+                    "Unknown situation")
                 self.store.put_notification(msg)
                 return
 
