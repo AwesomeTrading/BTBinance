@@ -6,7 +6,6 @@ import threading
 import time
 import logging
 import random
-import math
 from datetime import datetime, timedelta
 
 from backtrader.feed import DataBase
@@ -152,7 +151,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def _history_bars(self, q, limit=1500):
         bars = []
-        begindate = math.floor(self.p.fromdate.timestamp() * 1000)
+        begindate = self.p.fromdate.timestamp()
         while True:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,
