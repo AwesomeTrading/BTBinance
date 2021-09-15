@@ -331,11 +331,18 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def _on_order(self, raw):
         logger.info(f'Raw order: {raw}')
 
-        status = order_statuses_reversed[raw['status'].lower()]
         symbol = raw['symbol']
+
+        # filter symbol data
+        data = self._get_data(symbol)
+        if not data:
+            logger.warning(f"No data for symbol {symbol}")
+            return
+
+        # order content
+        status = order_statuses_reversed[raw['status'].lower()]
         price = raw['price']
         size = raw['amount']
-
         if status in [Order.Partial, Order.Completed]:
             size = raw['filled']
             price = raw['average']
@@ -344,6 +351,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if 'SELL' in raw['side'].upper():
             size = -size
 
+        # order info
         client_id = raw.get('clientOrderId', None)
         info = self._parse_order_info(client_id)
 
@@ -363,17 +371,12 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 commission = raw['comm']
                 if commission is None: commission = 0
                 if type(commission) == str: commission = float(commission)
-                self._fill_external(symbol, size, price, profit, commission)
+                self._fill_external(data, size, price, profit, commission)
             return
 
         # order ref not None, but didn't exist before
         if oref not in self.orders:
             Order.refbasis = itertools.count(oref)
-            data = self._get_data(symbol)
-            if not data:
-                logger.warning(f"No data for symbol {symbol}")
-                return
-
             OrderObject = BuyOrder if size > 0 else SellOrder
             order = OrderObject(
                 data=data,
@@ -551,15 +554,10 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._bracketize(order)
             self._ococheck(order)
 
-    def _fill_external(self, symbol, size, price, profit, commission):
+    def _fill_external(self, data, size, price, profit, commission):
         logger.debug("Fill external order: {}, {}, {}, {}, {}".format(
-            symbol, size, price, profit, commission))
+            data._name, size, price, profit, commission))
         if size == 0:
-            return
-
-        data = self._get_data(symbol)
-        if not data:
-            logger.warning(f"No data for symbol {symbol}")
             return
 
         # pos = self.getposition(data, clone=False)
