@@ -336,7 +336,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         # filter symbol data
         data = self._get_data(symbol)
         if not data:
-            logger.warning(f"No data for symbol {symbol}")
+            logger.warn(f"No data for symbol {symbol}")
             return
 
         # order content
