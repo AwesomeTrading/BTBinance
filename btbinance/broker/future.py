@@ -139,6 +139,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.cash, self.value = self.get_wallet_balance(self.currency)
         self.startingcash = self.cash
         self.startingvalue = self.value
+        logger.info("Account init cash=%f, value=%f", self.cash, self.value)
 
     def start(self):
         super().start()
@@ -146,7 +147,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._loop_account()
 
     def get_wallet_balance(self, currency, params={}):
-        balance = self.store.get_wallet_balance(currency, params=params)
+        balance = self.store.get_wallet_balance(params=params)
         cash = balance['free'][currency] if balance['free'][currency] else 0
         value = balance['total'][currency] if balance['total'][currency] else 0
         return cash, value
@@ -275,25 +276,26 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     # order update
     def _build_order_info(self, order: Order):
-        info = f"bt:r_{order.ref}"
+        info = f"bt-r_{order.ref}"
         if order.parent:
-            info += f":p_{order.parent.ref}"
+            info += f"-p_{order.parent.ref}"
         if order.valid:
-            info += f":exp_{order.valid}"
+            exp = round(order.valid * 1000000)
+            info += f"-exp_{exp}"
         if order.info.get('sl', False):
-            info += f":sl"
+            info += f"-sl"
         if order.info.get('tp', False):
-            info += f":tp"
+            info += f"-tp"
 
         return info
 
     def _parse_order_info(self, raw):
         '''
-        raw: bt:r_2:p_1:exp_123123.1232:sl
+        raw: bt-r_2-p_1-exp_1231231232-sl-tp
         '''
         info = dict(id=raw)
-        if raw and raw.startswith("bt:"):
-            splited = raw.split('bt:', 1)[1].split(':')
+        if raw and raw.startswith("bt-"):
+            splited = raw.split('bt-', 1)[1].split('-')
             pairs = dict()
             for s in splited:
                 if '_' in s:
@@ -312,7 +314,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
             # expire time
             expire = pairs.get('exp', None)
-            if expire: info['expire'] = float(expire)
+            if expire: info['expire'] = float(expire) / 1000000
 
             # stoploss
             sl = pairs.get('sl', None)
@@ -546,10 +548,14 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                       closedcomm, opened, openedvalue, openedcomm, margin, pnl,
                       psize, pprice)
 
-        if order.executed.remsize:
+        # if order.executed.remsize:
+        if not filled:
             order.partial()
             self.notify(order)
         else:
+            if order.executed.remsize:
+                logger.warn("Order %d execute remsize still existed: %s",
+                            order.ref, order.executed.remsize)
             order.completed()
             self.notify(order)
             self._bracketize(order)

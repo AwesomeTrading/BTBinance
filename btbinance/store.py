@@ -120,8 +120,8 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
         tf = self._get_exchange_timeframe(timeframe, compression)
         return self.exchange.fetch_ohlcv(timeframe=tf, **kwargs)
 
-    def get_wallet_balance(self, currency, params=None):
-        return self.exchange.get_my_wallet_balance(currency, params)
+    def get_wallet_balance(self, params=None):
+        return self.exchange.get_my_wallet_balance(params)
 
     def fetch_my_positions(self, symbols=None, params={}):
         return self.exchange.fetch_my_positions(symbols, params)
