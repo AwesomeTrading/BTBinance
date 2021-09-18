@@ -210,12 +210,13 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### account
     def _loop_account(self):
-        q, stream_id = self.store.subscribe_my_account()
+        label = "Account->"
+        for d in self.cerebro.datas:
+            label += d._name
+
+        q, stream_id = self.store.subscribe_my_account(label=label)
         t = threading.Thread(target=self._t_loop_account,
-                             args=(
-                                 q,
-                                 stream_id,
-                             ),
+                             args=(q, stream_id),
                              daemon=True)
         t.start()
 
