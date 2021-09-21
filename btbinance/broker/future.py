@@ -535,8 +535,8 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         data = order.data
         # position update before order come, should clone=True
         pos = self.getposition(data, clone=True)
-        # psize, pprice, opened, closed = pos.update(size, price)
-        psize, pprice, opened, closed = pos.size, pos.price, pos.size, pos.size - size
+        psize, pprice, opened, closed = pos.update(size, price)
+        # psize, pprice, opened, closed = pos.size, pos.price, pos.size, pos.size - size
         # comminfo = self.getcommissioninfo(data)
 
         closedvalue = profit
@@ -568,9 +568,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if size == 0:
             return
 
-        # # position update before order come, should clone=True
-        # pos = self.getposition(data, clone=True)
-        # pos.update(size, price)
+        # position update before order come, should clone=True
+        pos = self.getposition(data, clone=True)
+        pos.update(size, price)
 
         maker = BuyOrder if size > 0 else SellOrder
         order = maker(
