@@ -39,7 +39,7 @@ order_statuses: Final = {
 }
 order_statuses_reversed: Final = {v: k for k, v in order_statuses.items()}
 order_statuses_reversed.update({
-    'open': Order.Submitted,
+    'open': Order.Accepted,
     'new': Order.Accepted,
     'filled': Order.Completed,
     'partially_filled': Order.Partial,
@@ -211,9 +211,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### account
     def _loop_account(self):
-        label = "Account->"
-        for d in self.cerebro.datas:
-            label += d._name
+        label = "Account->" + ",".join([d._name for d in self.cerebro.datas])
 
         q, stream_id = self.store.subscribe_my_account(label=label)
         t = threading.Thread(target=self._t_loop_account,
@@ -235,7 +233,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                     self.cash = balance['wallet']
                     self.value = balance['cross']
 
-                # logger.warn("Need to handle positions")
                 self._on_positions(account['positions'])
 
             elif 'order' in event:
@@ -464,11 +461,13 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         order.accept()
         self.notify(order)
+
         # accept for stop order and limit order of bracket
-        bracket = self.brackets.get(order.ref, [])
-        for o in bracket:
-            if o.ref != order.ref:
-                self._accept(o)
+        if order.ref in self.brackets:
+            bracket = self.brackets.get(order.ref, [])
+            for o in bracket:
+                if o.ref != order.ref:
+                    self._accept(o)
 
     def _cancel(self, order):
         if order.status == Order.Canceled:
@@ -530,10 +529,12 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                     order = stop_order
 
         if filled:
-            size = order.size
+            # size = order.size
+            size = order.executed.remsize
 
         data = order.data
-        pos = self.getposition(data, clone=False)
+        # position update before order come, should clone=True
+        pos = self.getposition(data, clone=True)
         # psize, pprice, opened, closed = pos.update(size, price)
         psize, pprice, opened, closed = pos.size, pos.price, pos.size, pos.size - size
         # comminfo = self.getcommissioninfo(data)
@@ -567,7 +568,8 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if size == 0:
             return
 
-        # pos = self.getposition(data, clone=False)
+        # # position update before order come, should clone=True
+        # pos = self.getposition(data, clone=True)
         # pos.update(size, price)
 
         maker = BuyOrder if size > 0 else SellOrder
@@ -776,7 +778,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def modify(self, old: Order, new: Order):
         old.addinfo(modified=True)
         new.addinfo(modifiednew=True)
-        logger.info(f"MODIFY ORDER:{old.ref} {new.ref}")
 
         self.cancel(old)
         OrderFunc = self.buy if new.isbuy() else self.sell

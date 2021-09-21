@@ -117,7 +117,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             # listen before new bar completes
             if waittime > waitrandom:
                 waittime = waittime - waitrandom
-                logger.debug("get new bars: sleep for %ss", waittime)
+                logger.debug("Get new bars: sleep for %ss", waittime)
                 time.sleep(waittime)
 
             # get data
