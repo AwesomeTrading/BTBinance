@@ -197,7 +197,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             return
 
         # buypass key lock when delete while in loop
-        expired = [k for k in self.expires.keys() if k <= at]
+        expired = [k for k in self.expires.keys() if k < at]
         for k in expired:
             for o in self.expires[k]:
                 if o.alive():
