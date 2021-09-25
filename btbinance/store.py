@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8; py-indent-offset:4 -*-
-
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
-
 import logging
 import collections
 import backtrader as bt
@@ -56,7 +50,17 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
 
     DataCls = None  # data class will auto register
 
-    def __init__(self, currency, config, **kwargs):
+    def __init__(self, currency, key, secret, type='spot', **kwargs):
+        config = {
+            'apiKey': key,
+            'secret': secret,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': type,
+                'quoteOrderQty': False,
+                'warnOnFetchOpenOrdersWithoutSymbol': False
+            },
+        }
         self.exchange = PyBinanceWS(currency=currency, config=config, **kwargs)
         self.currency = currency
         self.notifies = collections.deque(maxlen=1000)
@@ -67,25 +71,16 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
         return cls.DataCls(*args, **kwargs)
 
     def start(self, data=None, broker=None):
-        # Datas require some processing to kickstart data reception
         if data is None and broker is None:
             return
 
         if data is not None:
             self._env = data._env
-            # For datas simulate a queue with None to kickstart co
-            # self.datas.append(data)
-
-            # if self.broker is not None:
-            #     self.broker.data_started(data)
-
         elif broker is not None:
             self.broker = broker
-        #     self.broker_threads()
-        #     self.streaming_events()
 
-    def live(self):
-        self.broker.live()
+    def onlive(self):
+        self.broker.onlive()
 
     def put_notification(self, msg, *args, **kwargs):
         self.notifies.append((msg, args, kwargs))

@@ -1,8 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8; py-indent-offset:4 -*-
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
-
 import collections
 import itertools
 import threading
@@ -56,67 +51,6 @@ class MetaBinanceBroker(BrokerBase.__class__):
 
 
 class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
-    '''Broker implementation for Binance cryptocurrency trading library.
-    This class maps the orders/positions from Binance to the
-    internal API of ``backtrader``.
-
-    Broker mapping added as I noticed that there differences between the expected
-    order_types and retuned status's from canceling an order
-
-    Added a new mappings parameter to the script with defaults.
-
-    Added a get_balance function. Manually check the account balance and update brokers
-    self.cash and self.value. This helps alleviate rate limit issues.
-
-    Added a new get_wallet_balance method. This will allow manual checking of the any coins
-        The method will allow setting parameters. Useful for dealing with multiple assets
-
-    Modified getcash() and getvalue():
-        Backtrader will call getcash and getvalue before and after next, slowing things down
-        with rest calls. As such, th
-
-    The broker mapping should contain a new dict for order_types and mappings like below:
-
-    broker_mapping = {
-        'order_types': {
-            bt.Order.Market: 'market',
-            bt.Order.Limit: 'limit',
-            bt.Order.Stop: 'stop-loss', #stop-loss for kraken, stop for bitmex
-            bt.Order.StopLimit: 'stop limit'
-        },
-        'mappings':{
-            'closed_order':{
-                'key': 'status',
-                'value':'closed'
-                },
-            'canceled_order':{
-                'key': 'result',
-                'value':1}
-                }
-        }
-
-    Added new private_end_point method to allow using any private non-unified end point
-
-    '''
-
-    order_types = {
-        Order.Market: 'market',
-        Order.Limit: 'limit',
-        Order.Stop: 'stop',  # stop-loss for kraken, stop for bitmex
-        Order.StopLimit: 'stop limit'
-    }
-
-    mappings = {
-        'closed_order': {
-            'key': 'status',
-            'value': 'closed'
-        },
-        'canceled_order': {
-            'key': 'status',
-            'value': 'canceled'
-        }
-    }
-
     params = dict(rebuild=True)
     store: BinanceStore = None
 
@@ -170,7 +104,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def notify(self, order: Order):
         self.notifies.put(order.clone())
 
-    def live(self):
+    def onlive(self):
         # First time live data
         if self.p.rebuild:
             self.rebuild_environement()
@@ -197,7 +131,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             return
 
         # buypass key lock when delete while in loop
-        expired = [k for k in self.expires.keys() if k < at]
+        expired = [k for k in self.expires.keys() if k <= at]
         for k in expired:
             for o in self.expires[k]:
                 if o.alive():
@@ -250,8 +184,8 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _rebuild_positions(self):
         symbols = self.cerebro.datasbyname.keys()
-        positions = self.store.fetch_my_positions(symbols)
-        self._on_positions(positions)
+        raws = self.store.fetch_my_positions(symbols)
+        self._on_positions(raws)
 
     def _on_positions(self, raws):
         for raw in raws:
@@ -290,7 +224,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         '''
         raw: bt-r_2-p_1-exp_1231231232-sl-tp
         '''
-        info = dict(id=raw)
+        info = dict(client_id=raw)
         if raw and raw.startswith("bt-"):
             splited = raw.split('bt-', 1)[1].split('-')
             pairs = dict()
@@ -371,7 +305,15 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
                 commission = raw['comm']
                 if commission is None: commission = 0
                 if type(commission) == str: commission = float(commission)
-                self._fill_external(data, size, price, profit, commission)
+                self._fill_external(
+                    data,
+                    size,
+                    price,
+                    profit,
+                    commission,
+                    id=raw['id'],
+                    **info,
+                )
             return
 
         # order ref not None, but didn't exist before
@@ -562,7 +504,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._bracketize(order)
             self._ococheck(order)
 
-    def _fill_external(self, data, size, price, profit, commission):
+    def _fill_external(self, data, size, price, profit, commission, **kwargs):
         logger.debug("Fill external order: {}, {}, {}, {}, {}".format(
             data._name, size, price, profit, commission))
         if size == 0:
@@ -580,6 +522,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             exectype=Order.Market,
             simulated=True,
         )
+        order.addinfo(**kwargs)
 
         order.addcomminfo(self.getcommissioninfo(data))
         order.execute(0, size, price, 0, profit, commission, size, 0.0, 0.0,

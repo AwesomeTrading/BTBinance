@@ -1,7 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8; py-indent-offset:4 -*-
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
 import threading
 import time
 import logging
@@ -28,19 +24,6 @@ class MetaBinanceFeed(DataBase.__class__):
 
 
 class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
-    """
-    CryptoCurrency eXchange Trading Library Data Feed.
-    Params:
-      - ``historical`` (default: ``False``)
-        If set to ``True`` the data feed will stop after doing the first
-        download of data.
-        The standard data feed parameters ``fromdate`` and ``todate`` will be
-        used as reference.
-      - ``backfill_start`` (default: ``True``)
-        Perform backfilling at the start. The maximum possible historical data
-        will be fetched in a single request.
-    """
-
     _StoreCls = BinanceStore
 
     params = dict(
@@ -48,6 +31,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         backfill=True,
         tick=False,
         adjstarttime=False,
+        qcheck=0.1,
     )
     store: BinanceStore = None
 
@@ -133,7 +117,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             try:
                 msg = in_q.get(timeout=1)
             except queue.Empty:
-                time.sleep(0.1)
                 continue
 
             msg = msg['bar']
@@ -161,14 +144,25 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 limit=limit,
             )
 
+            # empty result
             if len(raws) == 0:
                 break
 
+            # lastbar +1 to skip duplicated last bar of old data is first bar of new data
+            lastbar = raws[-1][0] + 1
+
+            # same result
+            if begindate == lastbar:
+                break
+
             bars.extend(raws)
+
+            # result is small, mean no more data
             if len(raws) < limit:
                 break
 
-            begindate = raws[-1][0] + 1
+            # continue with new path of data
+            begindate = lastbar
 
         # remove latest uncompleted bar
         bars = bars[:-1]
@@ -189,7 +183,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 try:
                     msg = self._q.get(timeout=self._qcheck)
                 except queue.Empty:
-                    time.sleep(0.1)
                     return None
 
                 if isinstance(msg, list):
@@ -198,7 +191,8 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                     if msg == "LIVE" and \
                         self._laststatus != self.LIVE:
                         self.put_notification(self.LIVE)
-                        self.store.live()
+                        # broadcast on live bar event
+                        self.store.onlive()
                     ret = None
                 else:
                     msg = msg['bar']
