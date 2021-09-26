@@ -105,16 +105,10 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.notifies.put(order.clone())
 
     def onlive(self):
-        # First time live data
         if self.p.rebuild:
-            self.rebuild_environement()
             self.p.rebuild = False
-
-    def rebuild_environement(self):
-        if self.p.rebuild:
             self._rebuild_positions()
             self._rebuild_orders()
-            self.p.rebuild = False
 
     def next(self):
         data = self.cerebro.datas[0]

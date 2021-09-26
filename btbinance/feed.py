@@ -35,7 +35,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
     )
     store: BinanceStore = None
 
-    # States for the Finite State Machine in _load
     _ST_LIVE, _ST_HISTORBACK, _ST_OVER = range(3)
 
     def __init__(self, **kwargs):
@@ -134,13 +133,13 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def _history_bars(self, q, limit=1500):
         bars = []
-        begindate = self.p.fromdate.timestamp()
+        begindt = self.p.fromdate.timestamp()
         while True:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,
                 timeframe=self._timeframe,
                 compression=self._compression,
-                since=begindate,
+                since=begindt,
                 limit=limit,
             )
 
@@ -148,11 +147,11 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             if len(raws) == 0:
                 break
 
-            # lastbar +1 to skip duplicated last bar of old data is first bar of new data
-            lastbar = raws[-1][0] + 1
+            # lastdt + 1 to skip duplicated last bar of old data is first bar of new data
+            lastdt = raws[-1][0] + 1
 
             # same result
-            if begindate == lastbar:
+            if begindt == lastdt:
                 break
 
             bars.extend(raws)
@@ -162,7 +161,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 break
 
             # continue with new path of data
-            begindate = lastbar
+            begindt = lastdt
 
         # remove latest uncompleted bar
         bars = bars[:-1]
