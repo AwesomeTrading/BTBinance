@@ -706,10 +706,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return order
 
     def modify(self, old: Order, new: Order):
-        old.addinfo(modified_old=True)
-        new.addinfo(modified_from=old)
-        new.addinfo(modified_new=True)
-
         self.cancel(old)
         OrderFunc = self.buy if new.isbuy() else self.sell
         return OrderFunc(
