@@ -335,13 +335,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         # skip for local expire and server cancel
         if order.info.get('expired', False) and status == Order.Canceled:
             return
-        # skip for order local modified and server cancel
-        if order.info.get('modified', False) and status == Order.Canceled:
-            return
-        if order.info.get('modifiednew', False) and \
-            status in [Order.Submitted, Order.Accepted]:
-            del order.info['modifiednew']
-            return
         # skip for local stop market and server expire then complete
         if order.info.get('stopmarket', False) and status == Order.Accepted:
             return
@@ -713,8 +706,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return order
 
     def modify(self, old: Order, new: Order):
-        old.addinfo(modified=True)
-        new.addinfo(modifiednew=True)
+        old.addinfo(modified_old=True)
+        new.addinfo(modified_from=old)
+        new.addinfo(modified_new=True)
 
         self.cancel(old)
         OrderFunc = self.buy if new.isbuy() else self.sell
