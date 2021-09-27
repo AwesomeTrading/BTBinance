@@ -108,6 +108,9 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
         return tf
 
     ### API
+    def get_time(self):
+        return self.exchange.get_time()
+
     def get_my_balance(self):
         return self.exchange.get_my_balance()
 

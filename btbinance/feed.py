@@ -89,17 +89,23 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         t.start()
 
     def _t_thread_bars_stream(self, dataname, timeframe, compression, q):
-        waitrandom = random.randint(8, 20)
+        waitrandom = random.randint(8, 18)
+
+        # get difference of local and server time
+        dtserver = self.store.get_time()
+        dtserver = datetime.utcfromtimestamp(dtserver / 1000)
+        dtlocaldiff = dtserver - datetime.utcnow()
+
         while True:
             # wait for next bar
-            dtnow = datetime.utcnow()
+            dtnow = datetime.utcnow() + dtlocaldiff
             dtnext = bar_starttime(timeframe, compression, dt=dtnow, offset=-1)
             waittime = (dtnext - dtnow).total_seconds()
 
             # listen waitrandom seconds before new bar comes
             if waittime > waitrandom:
                 waittime = waittime - waitrandom
-                logger.debug("get new bars: sleep for %ss", waittime)
+                logger.debug("wait %ss to get new bar", waittime)
                 time.sleep(waittime)
 
             # get data
@@ -109,11 +115,13 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 compression,
             )
 
-            waittimeout = waitrandom + 3
+            waittimeout = waitrandom + 5
             self._get_closed_bar(tmp_q, q, stream_id, waittimeout)
 
     def _get_closed_bar(self, in_q, out_q, stream_id, timeout):
-        """timeout: timeout waitting for new bar in seconds"""
+        """:Param timeout: timeout waitting for new bar in seconds
+                    after that will get missing bar from history.
+        """
         dtstart = datetime.utcnow()
         while True:
             try:
