@@ -89,7 +89,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         t.start()
 
     def _t_thread_bars_stream(self, dataname, timeframe, compression, q):
-        waitrandom = random.randint(5, 15)
+        waitrandom = random.randint(8, 20)
         while True:
             # wait for next bar
             dtnow = datetime.utcnow()
@@ -133,13 +133,13 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def _history_bars(self, q, limit=1500):
         bars = []
-        begindt = self.p.fromdate.timestamp()
+        dtbegin = self.p.fromdate.timestamp()
         while True:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,
                 timeframe=self._timeframe,
                 compression=self._compression,
-                since=begindt,
+                since=dtbegin,
                 limit=limit,
             )
 
@@ -147,11 +147,11 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             if len(raws) == 0:
                 break
 
-            # lastdt + 1 to skip duplicated last bar of old data is first bar of new data
-            lastdt = raws[-1][0] + 1
+            # dtlast + 1 to skip duplicated last bar of old data is first bar of new data
+            dtlast = raws[-1][0] + 1
 
             # same result
-            if begindt == lastdt:
+            if dtbegin == dtlast:
                 break
 
             bars.extend(raws)
@@ -161,7 +161,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 break
 
             # continue with new path of data
-            begindt = lastdt
+            dtbegin = dtlast
 
         # remove latest uncompleted bar
         bars = bars[:-1]
