@@ -65,9 +65,10 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.orders = collections.OrderedDict()
         self.opending_orders = collections.defaultdict(list)
         self.brackets = dict()
+        self.notifies = queue.Queue()
         self._ocos = dict()
         self._ocol = collections.defaultdict(list)
-        self.notifies = queue.Queue()
+        self._isalive = True
 
         # balance
         self.cash, self.value = self.get_wallet_balance(self.currency)
@@ -79,6 +80,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         super().start()
         self.store.start(broker=self)
         self._loop_account()
+
+    def stop(self):
+        self._isalive = False
 
     def get_wallet_balance(self, currency, params={}):
         balance = self.store.get_wallet_balance(params=params)
@@ -139,20 +143,21 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### account
     def _loop_account(self):
-        label = "Account->" + ",".join([d._name for d in self.cerebro.datas])
+        symbols = ",".join([d._name for d in self.cerebro.datas])
+        label = "Account->" + symbols
 
-        q, stream_id = self.store.subscribe_my_account(label=label)
+        q, stream_id = self.store.subscribe_my_account(label=label,
+                                                       symbols=symbols)
         t = threading.Thread(target=self._t_loop_account,
                              args=(q, stream_id),
                              daemon=True)
         t.start()
 
     def _t_loop_account(self, q, stream_id):
-        while True:
+        while self._isalive:
             try:
-                event = q.get(timeout=999)
+                event = q.get(timeout=1)
             except queue.Empty:
-                time.sleep(1)
                 continue
 
             if 'account' in event:

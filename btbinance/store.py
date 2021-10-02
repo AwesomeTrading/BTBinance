@@ -92,6 +92,7 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
 
     def stop(self):
         self.exchange.stop()
+        logger.info("BinanceStore is stopping...")
 
     ### Internal
     def _get_exchange_timeframe(self, timeframe, compression):

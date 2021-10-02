@@ -47,6 +47,10 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
     def islive(self):
         return not self.p.historical
 
+    def stop(self):
+        self._state = self._ST_OVER
+        logger.info("BinanceFeed %s is stopping...", self._name)
+
     def start(self):
         super().start()
 
@@ -96,7 +100,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         dtserver = datetime.utcfromtimestamp(dtserver / 1000)
         dtlocaldiff = dtserver - datetime.utcnow()
 
-        while True:
+        while self._state != self._ST_OVER:
             # wait for next bar
             dtnow = datetime.utcnow() + dtlocaldiff
             dtnext = bar_starttime(timeframe, compression, dt=dtnow, offset=-1)
@@ -123,7 +127,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                     after that will get missing bar from history.
         """
         dtstart = datetime.utcnow()
-        while True:
+        while self._state != self._ST_OVER:
             try:
                 # if if lastest bar doesn't exist, get it from history then exit
                 dtdiff = datetime.utcnow() - dtstart
@@ -155,7 +159,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         if since is None:
             since = self.p.fromdate.timestamp()
         bars = []
-        while True:
+        while self._state != self._ST_OVER:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,
                 timeframe=self._timeframe,
