@@ -3,10 +3,8 @@ import time
 import logging
 import random
 from datetime import datetime, timedelta
-
 from backtrader.feed import DataBase
 from backtrader.utils.py3 import with_metaclass, queue
-from backtrader import date2num
 
 from .store import BinanceStore
 from .utils import bar_starttime
@@ -31,7 +29,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         backfill=True,
         tick=False,
         adjstarttime=False,
-        qcheck=0.1,
+        qcheck=1,
     )
     store: BinanceStore = None
 
@@ -42,7 +40,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         self._q = queue.Queue()
 
     def haslivedata(self):
-        return self._state == self._ST_LIVE and self._q
+        return bool(self._laststatus == self.LIVE and self._q)
 
     def islive(self):
         return not self.p.historical
@@ -245,7 +243,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             # rounding issues, 10 microseconds is minimum)
             dtobj = bar_starttime(self._timeframe, self._compression, dtobj,
                                   -1) - timedelta(microseconds=100)
-        dt = date2num(dtobj, tz=self.p.tz)
+        dt = self.date2num(dtobj)
         dt1 = self.lines.datetime[-1]
         if dt < dt1:
             return False  # time already seen
