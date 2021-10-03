@@ -1,11 +1,13 @@
 import collections
 import itertools
 import threading
-import time
 import logging
 from typing import Final
+from datetime import datetime
 
+import backtrader as bt
 from backtrader import BrokerBase, Order, BuyOrder, SellOrder, Position
+from backtrader.feed import DataBase
 from backtrader.utils.py3 import queue, with_metaclass
 
 from ..store import BinanceStore
@@ -51,7 +53,10 @@ class MetaBinanceBroker(BrokerBase.__class__):
 
 
 class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
-    params = dict(rebuild=True)
+    params = dict(
+        rebuild=True,  # rebuild order at startup
+        checkexpire=60,  # loop check order expire
+    )
     store: BinanceStore = None
 
     def __init__(self, **kwargs):
@@ -79,7 +84,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def start(self):
         super().start()
         self.store.start(broker=self)
-        self._loop_account()
 
     def stop(self):
         self._isalive = False
@@ -109,14 +113,21 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.notifies.put(order.clone())
 
     def onlive(self):
+        for d in self.cerebro.datas:
+            if d._laststatus != DataBase.LIVE:
+                return
+
         if self.p.rebuild:
-            self.p.rebuild = False
+            logger.info('rebuild positions & orders...')
+            # self.p.rebuild = False
             self._rebuild_positions()
             self._rebuild_orders()
 
+        # load dependencies for live trading
+        self._loop_account()
+
     def next(self):
-        data = self.cerebro.datas[0]
-        self._check_expire(data.datetime[0])
+        self._check_expire()
 
     ### expired
     def _add_expire(self, order):
@@ -124,12 +135,19 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             return
         self.expires[order.valid].append(order)
 
-    def _check_expire(self, at):
+    def _datenow(self):
+        tz = self.cerebro.datas[0]._tz
+        return bt.date2num(tz.localize(datetime.utcnow()))
+
+    def _check_expire(self):
         if len(self.expires) == 0:
             return
 
+        # datetime now with server timezone
+        now = self._datenow()
+
         # buypass key lock when delete while in loop
-        expired = [k for k in self.expires.keys() if k <= at]
+        expired = [k for k in self.expires.keys() if k <= now]
         for k in expired:
             for o in self.expires[k]:
                 if o.alive():
@@ -202,7 +220,12 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     ### order
     def orderstatus(self, order):
-        return order.status
+        try:
+            o = self.orders[order.ref]
+        except ValueError:
+            o = order
+
+        return o.status
 
     # order update
     def _build_order_info(self, order: Order):
@@ -677,7 +700,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def _create(self, order: Order):
         # param
         params = dict()
-        if order.parent or order.info.get('sl', False):
+        if order.parent or \
+            order.info.get('sl', False) or \
+            order.info.get('tp', False):
             params['closePosition'] = True
 
         # order ref
@@ -700,6 +725,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # amount
         amount = abs(order.size)
+
         o = self.store.create_my_order(symbol=order.data._name,
                                        type=order_type,
                                        side=side,
