@@ -34,6 +34,7 @@ class BinanceSpotBroker(BinanceFutureBroker):
 
         # amount
         amount = abs(order.size)
+
         o = self.store.create_my_order(symbol=order.data._name,
                                        type=order_type,
                                        side=side,
