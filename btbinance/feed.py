@@ -136,7 +136,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                     return
 
                 # get bar info from raw bar stream
-                msg = in_q.get(timeout=0.1)
+                msg = in_q.get(timeout=0.5)
             except queue.Empty:
                 continue
 
@@ -200,40 +200,39 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         if self._state == self._ST_OVER:
             return False
 
-        while True:
-            if self._state == self._ST_LIVE:
-                try:
-                    msg = self._q.get(timeout=self._qcheck)
-                except queue.Empty:
-                    return None
+        while self._state == self._ST_LIVE:
+            try:
+                msg = self._q.get(timeout=self._qcheck)
+            except queue.Empty:
+                return None
 
-                if isinstance(msg, list):
-                    ret = self._put_bar(msg)
-                elif isinstance(msg, str):
-                    if msg == "LIVE" and \
-                        self._laststatus != self.LIVE:
-                        self.put_notification(self.LIVE)
-                        # broadcast on live bar event
-                        self.store.onlive()
-                    ret = None
+            if isinstance(msg, list):
+                ret = self._put_bar(msg)
+            elif isinstance(msg, str):
+                if msg == "LIVE" and \
+                    self._laststatus != self.LIVE:
+                    self.put_notification(self.LIVE)
+                    # broadcast on live bar event
+                    self.store.onlive()
+                ret = None
+            else:
+                msg = msg['bar']
+                bar = [
+                    msg['start'],
+                    msg['open'],
+                    msg['high'],
+                    msg['low'],
+                    msg['close'],
+                    msg['volume'],
+                ]
+                if self.p.tick:
+                    ret = self._put_bar(bar)
+                elif msg['closed']:
+                    ret = self._put_bar(bar)
                 else:
-                    msg = msg['bar']
-                    bar = [
-                        msg['start'],
-                        msg['open'],
-                        msg['high'],
-                        msg['low'],
-                        msg['close'],
-                        msg['volume'],
-                    ]
-                    if self.p.tick:
-                        ret = self._put_bar(bar)
-                    elif msg['closed']:
-                        ret = self._put_bar(bar)
-                    else:
-                        ret = None
-                if ret:
-                    return True
+                    ret = None
+            if ret:
+                return True
 
     def _put_bar(self, msg):
         dtobj = datetime.utcfromtimestamp(float(msg[0] / 1000))
