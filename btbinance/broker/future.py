@@ -737,9 +737,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return order
 
     def modify(self, old: Order, new: Order):
-        self.cancel(old)
+        """place new order before close old order"""
         OrderFunc = self.buy if new.isbuy() else self.sell
-        return OrderFunc(
+        order = OrderFunc(
             owner=new.owner,
             data=new.data,
             size=new.size,
@@ -755,6 +755,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             transmit=new.transmit,
             **new.info,
         )
+
+        self.cancel(old)
+        return order
 
     def cancel(self, order: Order):
         if not self.orders.get(order.ref, False):
