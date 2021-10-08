@@ -486,8 +486,6 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         if filled:
             size = order.executed.remsize
-            if order.issell():
-                size = -size
 
         data = order.data
         # position update before order come, should clone=True
