@@ -297,7 +297,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         # order content
         status = order_statuses_reversed[raw['status'].lower()]
         price = raw['price']
-        size = raw['amount']
+        size = raw['amount'] or 0
         if status in [Order.Partial, Order.Completed]:
             size = raw['filled']
             price = raw['average']
