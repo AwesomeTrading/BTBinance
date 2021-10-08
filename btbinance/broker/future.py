@@ -2,7 +2,6 @@ import collections
 import itertools
 import threading
 import logging
-from typing import Final
 from datetime import datetime
 
 import backtrader as bt
@@ -16,14 +15,14 @@ from ..utils import _val
 logger = logging.getLogger('BinanceFutureBroker')
 
 # LIMIT', 'MARKET', 'STOP', 'STOP_MARKET', 'TAKE_PROFIT', 'TAKE_PROFIT_MARKET', 'TRAILING_STOP_MARKET
-order_types: Final = {
+order_types = {
     Order.Market: 'market',
     Order.Limit: 'limit',
     Order.Stop: 'stop_market',
     Order.StopLimit: 'stop',
 }
 
-order_statuses: Final = {
+order_statuses = {
     Order.Created: 'open',
     Order.Submitted: 'open',
     Order.Accepted: 'open',
@@ -34,7 +33,7 @@ order_statuses: Final = {
     # 'Margin',
     Order.Rejected: 'rejected',
 }
-order_statuses_reversed: Final = {v: k for k, v in order_statuses.items()}
+order_statuses_reversed = {v: k for k, v in order_statuses.items()}
 order_statuses_reversed.update({
     'open': Order.Accepted,
     'new': Order.Accepted,
