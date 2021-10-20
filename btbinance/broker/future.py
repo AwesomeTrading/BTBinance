@@ -150,8 +150,13 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         for k in expired:
             for o in self.expires[k]:
                 if o.alive():
+                    status = o.status
                     self._expire(o)
-                    self.cancel(o)
+                    if status > Order.Created:
+                        try:
+                            self.cancel(o)
+                        except Exception as e:
+                            logger.error("Check expire order error: %s", e)
             del self.expires[k]
 
     ### data
@@ -205,7 +210,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _on_positions(self, raws):
         for raw in raws:
-            logger.info(f'Raw position: {raw}')
+            logger.info('Raw position: %s', raw)
 
             price = _val(raw, ['price', 'entryPrice'])
             price = 0 if price is None else float(price)
@@ -284,14 +289,14 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._on_order(raw)
 
     def _on_order(self, raw):
-        logger.info(f'Raw order: {raw}')
+        logger.info('Raw order: %s', raw)
 
         symbol = raw['symbol']
 
         # filter symbol data
         data = self._get_data(symbol)
         if not data:
-            logger.warn(f"No data for symbol {symbol}")
+            logger.warn("No data for symbol %s", symbol)
             return
 
         # order content
@@ -320,7 +325,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # order still didn't exist before
         if not oref:
-            logger.warn(f"External order {symbol} id={raw['id']}")
+            logger.warn("External order %s id=%s", (symbol, raw['id']))
             if status in [Order.Partial, Order.Completed]:
                 profit = raw['profit']
                 commission = raw['comm']
