@@ -325,7 +325,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # order still didn't exist before
         if not oref:
-            logger.warn("External order %s id=%s", (symbol, raw['id']))
+            logger.warn("External order %s id=%s", symbol, raw['id'])
             if status in [Order.Partial, Order.Completed]:
                 profit = raw['profit']
                 commission = raw['comm']
@@ -459,8 +459,8 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
               **kwargs):
         if size == 0 and not filled:
             return
-        logger.debug("Fill order: %d, %f, %f, %f, %f, %f",
-                     (order.ref, size, price, filled, profit, commission))
+        logger.debug("Fill order: %d, %f, %f, %f, %f, %f", order.ref, size,
+                     price, filled, profit, commission)
 
         if not order.alive():  # can be a bracket
             pref = getattr(order.parent, "ref", order.ref)
@@ -523,8 +523,8 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._ococheck(order)
 
     def _fill_external(self, data, size, price, profit, commission, **kwargs):
-        logger.debug("Fill external order: {}, {}, {}, {}, {}".format(
-            data._name, size, price, profit, commission))
+        logger.debug("Fill external order: %s, %f, %f, %f, %f", data._name,
+                     size, price, profit, commission)
         if size == 0:
             return
 
