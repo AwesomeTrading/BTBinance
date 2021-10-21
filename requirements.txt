@@ -1,5 +1,2 @@
 backtrader
-ccxt
-numpy
-unicorn-binance-websocket-api
 pybinance @ git+ssh://git@github.com/AwesomeTrading/PyBinance.git@main
