@@ -1,4 +1,8 @@
 from setuptools import setup, find_packages
+from pip._internal.req import parse_requirements
+
+install_requires = parse_requirements('requirements.txt', session='hack')
+install_requires = [str(ir.requirement) for ir in install_requires]
 
 setup(
     name='btbinance',
@@ -8,9 +12,5 @@ setup(
     author='Santatic',
     license='Private',
     packages=find_packages(include=['btbinance', 'btbinance.*']),
-    install_requires=[
-        'backtrader',
-        'unicorn_binance_websocket_api',
-        'pybinance @ git+ssh://git@github.com/AwesomeTrading/PyBinance.git@main',
-    ],
+    install_requires=install_requires,
 )
