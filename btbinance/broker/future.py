@@ -160,12 +160,14 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             del self.expires[k]
 
     ### data
-    def _get_data(self, name):
-        return self.cerebro.datasbyname.get(name, None)
+    def _get_data(self, symbol):
+        for d in self.cerebro.datas:
+            if symbol == d._dataname:
+                return d
 
     ### account
     def _loop_account(self):
-        symbols = ",".join([d._name for d in self.cerebro.datas])
+        symbols = ",".join([d._dataname for d in self.cerebro.datas])
         label = "Account->" + symbols
 
         q, stream_id = self.store.subscribe_my_account(label=label,
@@ -204,7 +206,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         return pos
 
     def _rebuild_positions(self):
-        symbols = self.cerebro.datasbyname.keys()
+        symbols = [d._dataname for d in self.cerebro.datas]
+        # Remove duplicated symbol
+        symbols = list(dict.fromkeys(symbols))
         raws = self.store.fetch_my_positions(symbols)
         self._on_positions(raws)
 
@@ -729,7 +733,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         # amount
         amount = abs(order.size)
 
-        o = self.store.create_my_order(symbol=order.data._name,
+        o = self.store.create_my_order(symbol=order.data._dataname,
                                        type=order_type,
                                        side=side,
                                        amount=amount,
@@ -772,4 +776,4 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         if not id:
             raise Exception(f'Order doesnot have id {order}')
 
-        return self.store.cancel_my_order(id, order.data._name)
+        return self.store.cancel_my_order(id, order.data._dataname)

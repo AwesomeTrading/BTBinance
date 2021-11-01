@@ -102,6 +102,7 @@ def period_name(timeframe: TimeFrame, compression: int):
         TimeFrame.Names[timeframe],
     )
 
+
 def _val(obj, keys, default=None):
     if type(keys) == str:
         if keys in obj:
