@@ -67,15 +67,15 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         if self.p.tick:
             self.store.subscribe_bars(
                 [self.p.dataname],
-                self._timeframe,
-                self._compression,
+                self.p.timeframe,
+                self.p.compression,
                 self._q,
             )
         else:
             self._bars_stream(
                 [self.p.dataname],
-                self._timeframe,
-                self._compression,
+                self.p.timeframe,
+                self.p.compression,
                 self._q,
             )
 
@@ -117,8 +117,8 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 compression,
             )
 
-            waittimeout = waitrandom + 5
-            self._get_closed_bar(tmp_q, q, stream_id, waittimeout)
+            timeout_at = dtnext + timedelta(seconds=5)
+            self._get_closed_bar(tmp_q, q, stream_id, timeout=timeout_at)
 
     def _get_closed_bar(self, in_q, out_q, stream_id, timeout):
         """:Param timeout: timeout waitting for new bar in seconds
@@ -127,12 +127,16 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         dtstart = datetime.utcnow()
         while self._state != self._ST_OVER:
             try:
-                # if if lastest bar doesn't exist, get it from history then exit
-                dtdiff = datetime.utcnow() - dtstart
-                if dtdiff.total_seconds() > timeout:
+                # if lastest bar doesn't exist, get it from history then exit
+                if datetime.utcnow() > timeout:
                     logger.warn("timeout waitting for new bar[%d]", len(self))
                     self.store.unsubscribe(stream_id)
-                    self._history_bars(self._q, since=dtstart.timestamp())
+                    # Get last completed bar by datetime from begin of that bar
+                    fromdt = bar_starttime(self.p.timeframe,
+                                           self.p.compression,
+                                           dt=dtstart,
+                                           offset=1)
+                    self._history_bars(self._q, since=fromdt.timestamp())
                     return
 
                 # get bar info from raw bar stream
@@ -160,8 +164,8 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         while self._state != self._ST_OVER:
             raws = self.store.fetch_ohlcv(
                 symbol=self.p.dataname,
-                timeframe=self._timeframe,
-                compression=self._compression,
+                timeframe=self.p.timeframe,
+                compression=self.p.compression,
                 since=since,
                 limit=limit,
             )
@@ -170,7 +174,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             if len(raws) == 0:
                 break
 
-            # dtlast + 1 to skip duplicated last bar of old data is first bar of new data
+            # dtlast + 1 to skip duplicated last bar of old request is first bar of new request
             dtlast = raws[-1][0] + 1
 
             # same result
@@ -240,7 +244,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             # move time to start time of next bar
             # and subtract 0.1 miliseconds (ensures no
             # rounding issues, 10 microseconds is minimum)
-            dtobj = bar_starttime(self._timeframe, self._compression, dtobj,
+            dtobj = bar_starttime(self.p.timeframe, self.p.compression, dtobj,
                                   -1) - timedelta(microseconds=100)
         dt = self.date2num(dtobj)
         dt1 = self.lines.datetime[-1]
