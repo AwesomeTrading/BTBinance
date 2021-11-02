@@ -293,15 +293,15 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
             self._on_order(raw)
 
     def _on_order(self, raw):
-        logger.info('Raw order: %s', raw)
-
         symbol = raw['symbol']
 
         # filter symbol data
         data = self._get_data(symbol)
         if not data:
-            logger.warn("No data for symbol %s", symbol)
+            # logger.warn("No data for symbol %s", symbol)
             return
+
+        logger.info('Raw order: %s', raw)
 
         # order content
         status = order_statuses_reversed[raw['status'].lower()]
