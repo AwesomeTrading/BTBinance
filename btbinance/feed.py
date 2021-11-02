@@ -28,7 +28,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         historical=False,
         backfill=True,
         tick=False,
-        adjstarttime=False,
         qcheck=1,
     )
     store: BinanceStore = None
@@ -107,7 +106,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             # listen waitrandom seconds before new bar comes
             if waittime > waitrandom:
                 waittime = waittime - waitrandom
-                logger.debug("wait %ss to get new bar", waittime)
+                logger.debug("Wait %ss to get new bar", waittime)
                 time.sleep(waittime)
 
             # get data
@@ -129,14 +128,16 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
             try:
                 # if lastest bar doesn't exist, get it from history then exit
                 if datetime.utcnow() > timeout:
-                    logger.warn("timeout waitting for new bar[%d]", len(self))
+                    logger.warn("Timeout waitting for new bar[%d]", len(self))
                     self.store.unsubscribe(stream_id)
                     # Get last completed bar by datetime from begin of that bar
                     fromdt = bar_starttime(self.p.timeframe,
                                            self.p.compression,
                                            dt=dtstart,
-                                           offset=1)
-                    self._history_bars(self._q, since=fromdt.timestamp())
+                                           offset=2)
+                    self._history_bars(self._q,
+                                       since=fromdt.timestamp(),
+                                       limit=3)
                     return
 
                 # get bar info from raw bar stream
@@ -194,8 +195,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         bars = bars[:-1]
 
         for i in range(0, len(bars)):
-            if i == 0 or bars[i][0] <= bars[i - 1][0]:
-                continue
             q.put(bars[i])
 
         return q
@@ -204,10 +203,26 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         if self._state == self._ST_OVER:
             return False
 
+        if self._laststatus == self.LIVE:
+            currentdt = bar_starttime(self.p.timeframe,
+                                      self.p.compression,
+                                      dt=datetime.utcnow(),
+                                      offset=1)
+            currentdt = self.date2num(currentdt)
+        else:
+            currentdt = None
+
         while self._state == self._ST_LIVE:
             try:
                 msg = self._q.get(timeout=self._qcheck)
             except queue.Empty:
+                if currentdt is not None and \
+                    self.lines.datetime[0] < currentdt:
+                    since = self.num2date(self.lines.datetime[0])
+                    logger.warn("Load missing bar[%d] from %s",
+                                (len(self), since))
+                    self._history_bars(self._q, since=since, limit=3)
+                    continue
                 return None
 
             if isinstance(msg, list):
@@ -218,7 +233,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                     self.put_notification(self.LIVE)
                     # broadcast on live bar event
                     self.store.onlive()
-                ret = None
+                ret = False
             else:
                 msg = msg['bar']
                 bar = [
@@ -234,24 +249,25 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 elif msg['closed']:
                     ret = self._put_bar(bar)
                 else:
-                    ret = None
+                    ret = False
             if ret:
+                if currentdt is not None and \
+                    self.lines.datetime[0] < currentdt:
+                    self.forward()
+                    continue
                 return True
 
     def _put_bar(self, msg):
         dtobj = datetime.utcfromtimestamp(float(msg[0] / 1000))
-        if self.p.adjstarttime:
-            # move time to start time of next bar
-            # and subtract 0.1 miliseconds (ensures no
-            # rounding issues, 10 microseconds is minimum)
-            dtobj = bar_starttime(self.p.timeframe, self.p.compression, dtobj,
-                                  -1) - timedelta(microseconds=100)
         dt = self.date2num(dtobj)
         dt1 = self.lines.datetime[-1]
-        if dt < dt1:
+
+        # Don't handle update current bar
+        if dt <= dt1:
+            logger.warn(f'Old bar {msg}')
             return False  # time already seen
-        if dt == dt1:
-            self.backwards(force=True)
+        # if dt == dt1:
+        #     self.backwards(force=True)
 
         # Common fields
         self.lines.datetime[0] = dt
