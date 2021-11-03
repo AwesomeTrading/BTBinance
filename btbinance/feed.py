@@ -254,27 +254,36 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 if currentdt is not None and \
                     self.lines.datetime[0] < currentdt:
                     self.forward()
+                    logger.warn("Bar( %d forwarding", len(self))
                     continue
                 return True
 
     def _put_bar(self, msg):
-        dtobj = datetime.utcfromtimestamp(float(msg[0] / 1000))
-        dt = self.date2num(dtobj)
+        bar = self._build_bar(msg)
+
+        dt = bar[self.DateTime]
         dt1 = self.lines.datetime[-1]
 
-        # Don't handle update current bar
-        if dt <= dt1:
+        if dt < dt1:
             logger.warn(f'Old bar {msg}')
             return False  # time already seen
-        # if dt == dt1:
-        #     self.backwards(force=True)
+        if dt == dt1:
+            self._updatebar(bar, forward=False, ago=1)
+            return False
 
-        # Common fields
-        self.lines.datetime[0] = dt
-        self.lines.open[0] = float(msg[1])
-        self.lines.high[0] = float(msg[2])
-        self.lines.low[0] = float(msg[3])
-        self.lines.close[0] = float(msg[4])
-        self.lines.volume[0] = float(msg[5])
-        self.lines.openinterest[0] = 0.0
+        self._updatebar(bar, forward=False, ago=0)
         return True
+
+    def _build_bar(self, msg):
+        dtobj = datetime.utcfromtimestamp(float(msg[0] / 1000))
+        dt = self.date2num(dtobj)
+
+        bar = [0] * self.size()
+        bar[self.DateTime] = dt
+        bar[self.Open] = float(msg[1])
+        bar[self.High] = float(msg[2])
+        bar[self.Low] = float(msg[3])
+        bar[self.Close] = float(msg[4])
+        bar[self.Volume] = float(msg[5])
+
+        return bar
