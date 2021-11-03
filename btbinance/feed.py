@@ -101,7 +101,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         while self._state != self._ST_OVER:
             # wait for next bar
             dtnow = datetime.now() + dtlocaldiff
-            dtnext = bar_starttime(timeframe, compression, dt=dtnow, offset=-1)
+            dtnext = bar_starttime(timeframe, compression, dt=dtnow, ago=-1)
 
             waittime = (dtnext - dtnow).total_seconds()
 
@@ -159,7 +159,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         startdt = bar_starttime(self.p.timeframe,
                                 self.p.compression,
                                 dt=at,
-                                offset=3)
+                                ago=3)
         self._history_bars(self._q, since=startdt.timestamp(), limit=3)
 
     def _history_bars(self, q, since=None, limit=1500):

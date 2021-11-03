@@ -5,7 +5,7 @@ from backtrader import TimeFrame
 def bar_starttime(timeframe,
                   compression,
                   dt=None,
-                  offset=0,
+                  ago=0,
                   sessionstart=time(hour=0, minute=0, second=0)):
     '''
     This method will return the start of the period based on current
@@ -16,8 +16,8 @@ def bar_starttime(timeframe,
     if timeframe == TimeFrame.Seconds:
         dt = dt.replace(second=(dt.second // compression) * compression,
                         microsecond=0)
-        if offset:
-            dt = dt - timedelta(seconds=compression * offset)
+        if ago:
+            dt = dt - timedelta(seconds=compression * ago)
     elif timeframe == TimeFrame.Minutes:
         # get start of day
         dtstart = bar_starttime(timeframe=TimeFrame.Days,
@@ -29,13 +29,13 @@ def bar_starttime(timeframe,
         minutes = ((dtdiff.seconds // 60) // compression) * compression
         dt = dtstart + timedelta(minutes=minutes)
 
-        if offset:
-            dt = dt - timedelta(minutes=compression * offset)
+        if ago:
+            dt = dt - timedelta(minutes=compression * ago)
     elif timeframe == TimeFrame.Days:
         if dt.hour < sessionstart.hour:
             dt = dt - timedelta(days=1)
-        if offset:
-            dt = dt - timedelta(days=offset)
+        if ago:
+            dt = dt - timedelta(days=ago)
         dt = dt.replace(hour=sessionstart.hour,
                         minute=sessionstart.minute,
                         second=sessionstart.second,
@@ -44,14 +44,14 @@ def bar_starttime(timeframe,
         if dt.weekday() != 6:
             # sunday is start of week at 5pm new york
             dt = dt - timedelta(days=dt.weekday() + 1)
-        if offset:
-            dt = dt - timedelta(days=offset * 7)
+        if ago:
+            dt = dt - timedelta(days=ago * 7)
         dt = dt.replace(hour=sessionstart.hour,
                         minute=sessionstart.minute,
                         second=sessionstart.second,
                         microsecond=sessionstart.microsecond)
     elif timeframe == TimeFrame.Months:
-        if offset:
+        if ago:
             dt = dt - timedelta(days=(min(28 + dt.day, 31)))
         # last day of month
         last_day_of_month = dt.replace(day=28) + timedelta(days=4)
