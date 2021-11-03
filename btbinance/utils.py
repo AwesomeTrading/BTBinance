@@ -6,13 +6,11 @@ def bar_starttime(timeframe,
                   compression,
                   dt=None,
                   offset=0,
-                  sessionstart=time(hour=0, minute=0, second=0, microsecond=0),
-                  tz=None):
+                  sessionstart=time(hour=0, minute=0, second=0)):
     '''
     This method will return the start of the period based on current
     time (or provided time).
     '''
-
     if dt is None:
         dt = datetime.utcnow()
     if timeframe == TimeFrame.Seconds:
@@ -21,22 +19,16 @@ def bar_starttime(timeframe,
         if offset:
             dt = dt - timedelta(seconds=compression * offset)
     elif timeframe == TimeFrame.Minutes:
-        if compression >= 60:
-            hours = 0
-            minutes = 0
-            # get start of day
-            dtstart = bar_starttime(TimeFrame.Days, 1, dt)
-            # diff start of day with current time to get seconds
-            # since start of day
-            dtdiff = dt - dtstart
-            # hours = dtdiff.seconds // ((60 * 60) * (compression // 60))
-            hours = dtdiff.seconds // 3600
-            minutes = compression % 60
-            dt = dtstart + timedelta(hours=hours, minutes=minutes)
-        else:
-            dt = dt.replace(minute=(dt.minute // compression) * compression,
-                            second=0,
-                            microsecond=0)
+        # get start of day
+        dtstart = bar_starttime(timeframe=TimeFrame.Days,
+                                compression=1,
+                                dt=dt,
+                                sessionstart=sessionstart)
+        # diff start of day with current time to get seconds since start of day
+        dtdiff = dt - dtstart
+        minutes = ((dtdiff.seconds // 60) // compression) * compression
+        dt = dtstart + timedelta(minutes=minutes)
+
         if offset:
             dt = dt - timedelta(minutes=compression * offset)
     elif timeframe == TimeFrame.Days:
@@ -73,9 +65,6 @@ def bar_starttime(timeframe,
                         minute=sessionstart.minute,
                         second=sessionstart.second,
                         microsecond=sessionstart.microsecond)
-
-    if tz is not None:
-        dt.replace(tzinfo=tz)
     return dt
 
 
