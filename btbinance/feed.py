@@ -3,8 +3,9 @@ import time
 import logging
 import random
 import math
+import pytz
 from datetime import datetime, timedelta
-from backtrader.feed import DataBase
+import backtrader as bt
 from backtrader.utils.py3 import with_metaclass, queue
 
 from .store import BinanceStore
@@ -13,7 +14,7 @@ from .utils import bar_starttime
 logger = logging.getLogger('BinanceFeed')
 
 
-class MetaBinanceFeed(DataBase.__class__):
+class MetaBinanceFeed(bt.DataBase.__class__):
     def __init__(cls, name, bases, dct):
         # Initialize the class
         super(MetaBinanceFeed, cls).__init__(name, bases, dct)
@@ -22,7 +23,7 @@ class MetaBinanceFeed(DataBase.__class__):
         BinanceStore.DataCls = cls
 
 
-class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
+class BinanceFeed(with_metaclass(MetaBinanceFeed, bt.DataBase)):
     _StoreCls = BinanceStore
 
     params = dict(
@@ -30,6 +31,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         backfill=True,
         tick=False,
         qcheck=1,
+        tz=pytz.UTC,
     )
     store: BinanceStore = None
 
@@ -95,12 +97,12 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
         # get difference of local and server time
         dtserver = self.store.get_time()
-        dtserver = datetime.fromtimestamp(dtserver / 1000)
-        dtlocaldiff = dtserver - datetime.now()
+        dtserver = datetime.fromtimestamp(dtserver / 1000, tz=self.p.tz)
+        dtlocaldiff = dtserver - datetime.now(tz=self.p.tz)
 
         while self._state != self._ST_OVER:
             # wait for next bar
-            dtnow = datetime.now() + dtlocaldiff
+            dtnow = datetime.now(tz=self.p.tz) + dtlocaldiff
             dtnext = bar_starttime(timeframe, compression, dt=dtnow, ago=-1)
 
             waittime = (dtnext - dtnow).total_seconds()
@@ -131,7 +133,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         bar_time = math.floor(at.timestamp() * 1000)
         while self._state != self._ST_OVER:
             try:
-                if datetime.now() > timeout:
+                if datetime.now(tz=self.p.tz) > timeout:
                     logger.warn("Timeout waitting for new bar[%d]", len(self))
                     break
 
@@ -164,7 +166,10 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
     def _history_bars(self, q, since=None, limit=1500):
         if since is None:
-            since = self.p.fromdate.timestamp()
+            since = self.p.fromdate
+            since.replace(tzinfo=self.p.tz)
+        since = since.timestamp()
+
         bars = []
         while self._state != self._ST_OVER:
             raws = self.store.fetch_ohlcv(
