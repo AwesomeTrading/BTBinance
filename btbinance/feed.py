@@ -2,6 +2,7 @@ import threading
 import time
 import logging
 import random
+import math
 from datetime import datetime, timedelta
 from backtrader.feed import DataBase
 from backtrader.utils.py3 import with_metaclass, queue
@@ -94,13 +95,14 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
 
         # get difference of local and server time
         dtserver = self.store.get_time()
-        dtserver = datetime.utcfromtimestamp(dtserver / 1000)
-        dtlocaldiff = dtserver - datetime.utcnow()
+        dtserver = datetime.fromtimestamp(dtserver / 1000)
+        dtlocaldiff = dtserver - datetime.now()
 
         while self._state != self._ST_OVER:
             # wait for next bar
-            dtnow = datetime.utcnow() + dtlocaldiff
+            dtnow = datetime.now() + dtlocaldiff
             dtnext = bar_starttime(timeframe, compression, dt=dtnow, offset=-1)
+
             waittime = (dtnext - dtnow).total_seconds()
 
             # listen waitrandom seconds before new bar comes
@@ -115,32 +117,24 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 timeframe,
                 compression,
             )
+            timeout_at = dtnext + timedelta(seconds=20)
+            self._get_closed_bar(tmp_q,
+                                 q,
+                                 stream_id,
+                                 at=dtnext,
+                                 timeout=timeout_at)
 
-            timeout_at = dtnext + timedelta(seconds=5)
-            self._get_closed_bar(tmp_q, q, stream_id, timeout=timeout_at)
-
-    def _get_closed_bar(self, in_q, out_q, stream_id, timeout):
+    def _get_closed_bar(self, in_q, out_q, stream_id, at, timeout):
         """:Param timeout: timeout waitting for new bar in seconds
                     after that will get missing bar from history.
         """
-        dtstart = datetime.utcnow()
+        bar_time = math.floor(at.timestamp() * 1000)
         while self._state != self._ST_OVER:
             try:
-                # if lastest bar doesn't exist, get it from history then exit
-                if datetime.utcnow() > timeout:
+                if datetime.now() > timeout:
                     logger.warn("Timeout waitting for new bar[%d]", len(self))
-                    self.store.unsubscribe(stream_id)
-                    # Get last completed bar by datetime from begin of that bar
-                    fromdt = bar_starttime(self.p.timeframe,
-                                           self.p.compression,
-                                           dt=dtstart,
-                                           offset=2)
-                    self._history_bars(self._q,
-                                       since=fromdt.timestamp(),
-                                       limit=3)
-                    return
+                    break
 
-                # get bar info from raw bar stream
                 msg = in_q.get(timeout=0.5)
             except queue.Empty:
                 continue
@@ -157,6 +151,16 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 ]
                 out_q.put(bar)
                 return self.store.unsubscribe(stream_id)
+            else:
+                if msg['start'] > bar_time:
+                    break
+
+        logger.warn(f'Get live bar {at} from history')
+        startdt = bar_starttime(self.p.timeframe,
+                                self.p.compression,
+                                dt=at,
+                                offset=3)
+        self._history_bars(self._q, since=startdt.timestamp(), limit=3)
 
     def _history_bars(self, q, since=None, limit=1500):
         if since is None:
@@ -203,26 +207,10 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
         if self._state == self._ST_OVER:
             return False
 
-        if self._laststatus == self.LIVE:
-            currentdt = bar_starttime(self.p.timeframe,
-                                      self.p.compression,
-                                      dt=datetime.utcnow(),
-                                      offset=1)
-            currentdt = self.date2num(currentdt)
-        else:
-            currentdt = None
-
         while self._state == self._ST_LIVE:
             try:
                 msg = self._q.get(timeout=self._qcheck)
             except queue.Empty:
-                if currentdt is not None and \
-                    self.lines.datetime[0] < currentdt:
-                    since = self.num2date(self.lines.datetime[0])
-                    logger.warn("Load missing bar[%d] from %s",
-                                (len(self), since))
-                    self._history_bars(self._q, since=since, limit=3)
-                    continue
                 return None
 
             if isinstance(msg, list):
@@ -251,11 +239,6 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, DataBase)):
                 else:
                     ret = False
             if ret:
-                if currentdt is not None and \
-                    self.lines.datetime[0] < currentdt:
-                    self.forward()
-                    logger.warn("Bar( %d forwarding", len(self))
-                    continue
                 return True
 
     def _put_bar(self, msg):

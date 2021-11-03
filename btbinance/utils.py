@@ -6,8 +6,8 @@ def bar_starttime(timeframe,
                   compression,
                   dt=None,
                   offset=0,
-                  sessionstart=time(hour=0, minute=0, second=0,
-                                    microsecond=0)):
+                  sessionstart=time(hour=0, minute=0, second=0, microsecond=0),
+                  tz=None):
     '''
     This method will return the start of the period based on current
     time (or provided time).
@@ -73,6 +73,9 @@ def bar_starttime(timeframe,
                         minute=sessionstart.minute,
                         second=sessionstart.second,
                         microsecond=sessionstart.microsecond)
+
+    if tz is not None:
+        dt.replace(tzinfo=tz)
     return dt
 
 
