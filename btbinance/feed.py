@@ -4,6 +4,7 @@ import logging
 import random
 import math
 import pytz
+import gc
 from datetime import datetime, timedelta
 import backtrader as bt
 from backtrader.utils.py3 import with_metaclass, queue
@@ -125,6 +126,9 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, bt.DataBase)):
                                  stream_id,
                                  at=dtnext,
                                  timeout=timeout_at)
+
+            # Clear RAM
+            gc.collect()
 
     def _get_closed_bar(self, in_q, out_q, stream_id, at, timeout):
         """:Param timeout: timeout waitting for new bar in seconds

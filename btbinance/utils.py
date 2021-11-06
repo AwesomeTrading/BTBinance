@@ -1,3 +1,4 @@
+import pytz
 from datetime import datetime, timedelta, time
 from backtrader import TimeFrame
 
@@ -12,7 +13,7 @@ def bar_starttime(timeframe,
     time (or provided time).
     '''
     if dt is None:
-        dt = datetime.utcnow()
+        dt = datetime.now(tz=pytz.UTC)
     if timeframe == TimeFrame.Seconds:
         dt = dt.replace(second=(dt.second // compression) * compression,
                         microsecond=0)
