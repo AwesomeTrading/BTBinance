@@ -136,7 +136,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _datenow(self):
         tz = self.cerebro.datas[0]._tz
-        return bt.date2num(tz.localize(datetime.utcnow()))
+        return bt.date2num(datetime.now(tz=tz))
 
     def _check_expire(self):
         if len(self.expires) == 0:
