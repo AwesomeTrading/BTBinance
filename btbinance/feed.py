@@ -166,7 +166,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, bt.DataBase)):
                                 self.p.compression,
                                 dt=at,
                                 ago=3)
-        self._history_bars(self._q, since=startdt.timestamp(), limit=3)
+        self._history_bars(self._q, since=startdt, limit=3)
 
     def _history_bars(self, q, since=None, limit=1500):
         if since is None:
