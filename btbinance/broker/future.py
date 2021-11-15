@@ -54,7 +54,9 @@ class MetaBinanceBroker(BrokerBase.__class__):
 class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     params = dict(
         rebuild=True,  # rebuild order at startup
-        checkexpire=60,  # loop check order expire
+        # Advance params
+        orderscache=100,
+        notifiescache=1000,
     )
     store: BinanceStore = None
 
@@ -63,22 +65,20 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         self.store = BinanceStore(**kwargs)
         self.expires = collections.defaultdict(list)
-        self.currency = self.store.currency
 
         self.positions = collections.defaultdict(Position)
         self.orders = collections.OrderedDict()
         self.opending_orders = collections.defaultdict(list)
         self.brackets = dict()
-        self.notifies = queue.Queue()
+        self.notifies = queue.Queue(maxsize=self.p.notifiescache)
         self._ocos = dict()
         self._ocol = collections.defaultdict(list)
         self._isalive = True
 
         # balance
-        self.cash, self.value = self.get_wallet_balance(self.currency)
+        self.get_wallet_balance()
         self.startingcash = self.cash
         self.startingvalue = self.value
-        logger.info("Account init cash=%f, value=%f", self.cash, self.value)
 
     def start(self):
         super().start()
@@ -87,11 +87,10 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     def stop(self):
         self._isalive = False
 
-    def get_wallet_balance(self, currency, params={}):
-        balance = self.store.get_wallet_balance(params=params)
-        cash = balance['free'][currency] if balance['free'][currency] else 0
-        value = balance['total'][currency] if balance['total'][currency] else 0
-        return cash, value
+    def get_wallet_balance(self, params=None):
+        self.cash, self.value = self.store.get_my_balance(params=params)
+        logger.info("Account cash=%f, value=%f", self.cash, self.value)
+        return self.cash, self.value
 
     def get_balance(self):
         return self.cash, self.value
@@ -110,8 +109,10 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def notify(self, order: Order):
         self.notifies.put(order.clone())
+        self._cleancaches()
 
     def onlive(self):
+        # Wait for all data lived
         for d in self.cerebro.datas:
             if d._laststatus != DataBase.LIVE:
                 return
@@ -186,10 +187,13 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
             if 'account' in event:
                 account = event['account']
-                for balance in account['balances']:
-                    self.cash = balance['wallet']
-                    self.value = balance['cross']
+                balance = account['balances'][0]
+                # for balance in account['balances']:
+                self.cash = balance['wallet']
+                self.value = balance['cross']
 
+                logger.info("Account updates cash=%f, value=%f", self.cash,
+                            self.value)
                 self._on_positions(account['positions'])
 
             elif 'order' in event:
@@ -207,8 +211,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
     def _rebuild_positions(self):
         symbols = [d._dataname for d in self.cerebro.datas]
-        # Remove duplicated symbol
-        symbols = list(dict.fromkeys(symbols))
+        symbols = list(dict.fromkeys(symbols))  # Remove duplicated symbol
         raws = self.store.fetch_my_positions(symbols)
         self._on_positions(raws)
 
@@ -452,6 +455,27 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self.notify(order)
         self._bracketize(order, cancel=True)
         self._ococheck(order)
+
+    def _cleancaches(self):
+        # Remove old orders
+        if len(self.orders) > self.p.orderscache:
+            keys = list(self.orders.keys())[:-self.p.orderscache]
+            # print(f"Remove order keys {keys}")
+            for key in keys:
+                # Remove order not alive or just created but not submit when create order error
+                if not self.orders[key].alive() or \
+                    self.orders[key].status == Order.Created:
+                    del self.orders[key]
+
+        # print("Expires: %d" % len(self.expires))
+        # print("Positions: %d" % len(self.positions))
+        # print("Orders: %d" % len(self.orders))
+        # print("Opending_orders: %d" % len(self.opending_orders))
+        # print("Brackets: %d" % len(self.brackets))
+        # print("Notifies: %d" % self.notifies.qsize())
+        # print("_ocos: %d" % len(self._ocos))
+        # print("_ocol: %d" % len(self._ocol))
+        # print(self.orders)
 
     def _fill(self,
               order: Order,

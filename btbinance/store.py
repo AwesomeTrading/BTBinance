@@ -112,15 +112,15 @@ class BinanceStore(with_metaclass(MetaSingleton, object)):
     def get_time(self):
         return self.exchange.get_time()
 
-    def get_my_balance(self):
-        return self.exchange.get_my_balance()
+    def get_my_balance(self, params=None):
+        balance = self.exchange.get_my_balance(params=params)
+        cash = balance['free'][self.currency]
+        value = balance['total'][self.currency]
+        return cash, value
 
     def fetch_ohlcv(self, timeframe, compression, **kwargs):
         tf = self._get_exchange_timeframe(timeframe, compression)
         return self.exchange.fetch_ohlcv(timeframe=tf, **kwargs)
-
-    def get_wallet_balance(self, params=None):
-        return self.exchange.get_my_wallet_balance(params)
 
     def fetch_my_positions(self, symbols=None, params={}):
         return self.exchange.fetch_my_positions(symbols, params)
