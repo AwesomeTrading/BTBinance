@@ -97,7 +97,7 @@ class BinanceFeed(with_metaclass(MetaBinanceFeed, bt.DataBase)):
         waitrandom = random.randint(8, 18)
 
         # get difference of local and server time
-        dtserver = self.store.get_time()
+        dtserver = self.store.fetch_time()
         dtserver = datetime.fromtimestamp(dtserver / 1000, tz=self.p.tz)
         dtlocaldiff = dtserver - datetime.now(tz=self.p.tz)
 

@@ -21,6 +21,7 @@ order_types = {
     Order.Stop: 'stop_market',
     Order.StopLimit: 'stop',
 }
+order_types_reversed = {v: k for k, v in order_types.items()}
 
 order_statuses = {
     Order.Created: 'open',
@@ -55,7 +56,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
     params = dict(
         rebuild=True,  # rebuild order at startup
         # Advance params
-        orderscache=100,
+        orderscache=50,
         notifiescache=1000,
     )
     store: BinanceStore = None
@@ -88,7 +89,7 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
         self._isalive = False
 
     def get_wallet_balance(self, params=None):
-        self.cash, self.value = self.store.get_my_balance(params=params)
+        self.cash, self.value = self.store.fetch_my_balance(params=params)
         logger.info("Account cash=%f, value=%f", self.cash, self.value)
         return self.cash, self.value
 
@@ -351,13 +352,14 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
         # order ref not None, but didn't exist before
         if oref not in self.orders:
-            Order.refbasis = itertools.count(oref)
             OrderObject = BuyOrder if size > 0 else SellOrder
+            order_type = order_types_reversed.get(raw['type'])
+            Order.refbasis = itertools.count(oref)
             order = OrderObject(
                 data=data,
                 size=size,
                 price=price,
-                exectype=Order.Limit,
+                exectype=order_type,
                 simulated=True,
                 valid=info.get('expire', None),
             )
