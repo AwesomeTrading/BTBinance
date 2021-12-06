@@ -195,7 +195,9 @@ class BinanceFutureBroker(with_metaclass(MetaBinanceBroker, BrokerBase)):
 
                 logger.info("Account updates cash=%f, value=%f", self.cash,
                             self.value)
-                self._on_positions(account['positions'])
+
+                if 'positions' in account:
+                    self._on_positions(account['positions'])
 
             elif 'order' in event:
                 raw = event['order']

@@ -26,7 +26,12 @@ class BinanceSpotBroker(BinanceFutureBroker):
             order.info.get('tp', False):
             order_type = 'take_profit'
 
-        if order_type in ['stop_loss', 'take_profit']:
+        if order_type in [
+                'stop_loss',
+                'stop_loss_limit',
+                'take_profit',
+                'take_profit_limit',
+        ]:
             params['stopPrice'] = order.price
 
         # order side
